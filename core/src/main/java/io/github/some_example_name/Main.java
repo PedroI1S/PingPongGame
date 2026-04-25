@@ -4,7 +4,7 @@ import com.badlogic.gdx.Game;
 import io.github.some_example_name.core.GameContext;
 import io.github.some_example_name.screen.LoadingScreen;
 import io.github.some_example_name.screen.LoadoutScreen;
-import io.github.some_example_name.screen.MatchScreen;
+import io.github.some_example_name.screen.MatchScreen3D;
 import io.github.some_example_name.screen.MenuScreen;
 
 /**
@@ -40,7 +40,7 @@ public class Main extends Game {
             openLoadout();
             return;
         }
-        setScreen(new MatchScreen(this));
+        setScreen(new MatchScreen3D(this));
     }
 
     @Override
