@@ -29,6 +29,7 @@ public final class ProceduralAssets implements Disposable {
     private final Texture background;
     private final Texture glow;
     private final Texture aimRing;
+    private final Texture noise;
     private final boolean ownsBallTexture;
     private final boolean ownsTableTextures;
 
@@ -43,9 +44,11 @@ public final class ProceduralAssets implements Disposable {
         Texture background,
         Texture glow,
         Texture aimRing,
+        Texture noise,
         boolean ownsBallTexture,
         boolean ownsTableTextures
     ) {
+        this.noise = noise;
         this.pixel = pixel;
         this.ball = ball;
         this.ballFrames = ballFrames;
@@ -81,6 +84,7 @@ public final class ProceduralAssets implements Disposable {
             createBackgroundTexture(),
             createGlowTexture(),
             createAimRingTexture(),
+            createNoiseTexture(),
             true,
             true
         );
@@ -113,6 +117,7 @@ public final class ProceduralAssets implements Disposable {
             createBackgroundTexture(),
             createGlowTexture(),
             createAimRingTexture(),
+            createNoiseTexture(),
             false,
             false
         );
@@ -172,6 +177,11 @@ public final class ProceduralAssets implements Disposable {
     /** Ring outline used for the trajectory landing-spot indicator. */
     public Texture getAimRing() {
         return aimRing;
+    }
+
+    /** Tileable monochrome noise — used as film grain overlay on menus. */
+    public Texture getNoise() {
+        return noise;
     }
 
     private static Texture createPixelTexture() {
@@ -302,6 +312,24 @@ public final class ProceduralAssets implements Disposable {
         return buildTexture(pixmap);
     }
 
+    private static Texture createNoiseTexture() {
+        int size = 256;
+        Pixmap pixmap = new Pixmap(size, size, Pixmap.Format.RGBA8888);
+        java.util.Random rng = new java.util.Random(0xCAFEBABEL);
+        for (int x = 0; x < size; x++) {
+            for (int y = 0; y < size; y++) {
+                float v = rng.nextFloat();
+                pixmap.setColor(v, v, v, 1f);
+                pixmap.drawPixel(x, y);
+            }
+        }
+        Texture texture = new Texture(pixmap);
+        texture.setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest);
+        texture.setWrap(Texture.TextureWrap.Repeat, Texture.TextureWrap.Repeat);
+        pixmap.dispose();
+        return texture;
+    }
+
     private static Texture createAimRingTexture() {
         int size = 64;
         Pixmap pixmap = new Pixmap(size, size, Pixmap.Format.RGBA8888);
@@ -374,5 +402,6 @@ public final class ProceduralAssets implements Disposable {
         background.dispose();
         glow.dispose();
         aimRing.dispose();
+        noise.dispose();
     }
 }

@@ -15,18 +15,21 @@ import io.github.some_example_name.model.MatchOutcome;
 public final class MenuScreen extends BaseScreen {
     private final MenuInputProcessor inputProcessor;
     private float clock;
+    private float entered;
 
     public MenuScreen(Main game) {
         super(game);
         this.inputProcessor = new MenuInputProcessor(game::openLoadout);
     }
 
-    @Override public void show() { Gdx.input.setInputProcessor(inputProcessor); }
+    @Override public void show() { Gdx.input.setInputProcessor(inputProcessor); entered = 0f; }
     @Override public void hide() { Gdx.input.setInputProcessor(null); }
 
     @Override
     public void render(float delta) {
-        clock += delta;
+        clock   += delta;
+        entered += delta;
+
         beginFrame(Palette.BG.r, Palette.BG.g, Palette.BG.b);
         SpriteBatch batch = context.getBatch();
         ProceduralAssets visuals = context.getAssets().getProceduralAssets();
@@ -36,11 +39,13 @@ public final class MenuScreen extends BaseScreen {
 
         batch.begin();
 
-        // Background gradient + faint red grid + scanlines
+        // Layered backdrop: gradient → red grid → moving scanline → static scanlines → grain.
         batch.setColor(Color.WHITE);
         batch.draw(visuals.getBackground(), 0f, 0f, GameConfig.WORLD_WIDTH, GameConfig.WORLD_HEIGHT);
         UIDraw.redGrid(batch, pixel, 0.04f);
         UIDraw.scanlines(batch, pixel);
+        UIDraw.movingScanline(batch, pixel, clock, 6f);
+        UIDraw.filmGrain(batch, visuals.getNoise(), clock, 0.05f);
         UIDraw.cornerMarks(batch, pixel, 24f);
 
         // Top / bottom system bars
@@ -52,63 +57,79 @@ public final class MenuScreen extends BaseScreen {
 
         MatchOutcome lastOutcome = context.getSession().getLastOutcome();
         String bottomRight = null;
-        Color bottomRightColor = Palette.TEXT_DIM;
+        Color  bottomRightColor = Palette.TEXT_DIM;
         if (lastOutcome == MatchOutcome.PLAYER_WIN) { bottomRight = "LAST DUEL: VICTORY"; bottomRightColor = Palette.GREEN; }
         else if (lastOutcome == MatchOutcome.BOT_WIN) { bottomRight = "LAST DUEL: DEFEAT"; bottomRightColor = Palette.RED; }
         UIDraw.bottomBar(batch, pixel, body, context.getGlyphLayout(),
             "PRESS ENTER OR CLICK TO BEGIN", bottomRight, bottomRightColor);
 
-        // ── Centered stack ───────────────────────────────────────────────
+        // ── Centered stack with entrance animations ──────────────────────
         float cx = GameConfig.WORLD_WIDTH * 0.5f;
 
-        // Eyebrow
+        // Eyebrow — slide down from above
+        float eyebrowP = UIDraw.entranceProgress(entered, 0f, 0.5f);
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "===  AIM ROULETTE  ===", cx, 600f, Palette.RED);
+            "===  AIM ROULETTE  ===",
+            cx, 600f - UIDraw.slideDown(eyebrowP), Palette.RED);
 
-        // Big "PONG" title
-        title.getData().setScale(3.6f);
-        UIDraw.centered(batch, title, context.getGlyphLayout(), "PONG", cx, 540f, Palette.TEXT);
-        title.getData().setScale(2.2f);
+        // Glitch PONG title — slide down (delay 0.1s)
+        float titleP = UIDraw.entranceProgress(entered, 0.1f, 0.5f);
+        UIDraw.glitchTitle(batch, title, context.getGlyphLayout(),
+            "PONG", cx, 540f - UIDraw.slideDown(titleP), 5.0f, clock);
 
-        // Red gradient line (segmented to fake the gradient)
-        drawRedGradientLine(batch, pixel, cx, 458f, 360f);
+        // Red gradient line — slide up (delay 0.2s)
+        float lineP = UIDraw.entranceProgress(entered, 0.2f, 0.5f);
+        drawRedGradientLine(batch, pixel, cx, 358f + UIDraw.slideUp(lineP), 360f);
 
-        // Tagline
+        // Tagline — slide up (delay 0.25s)
+        float taglineP = UIDraw.entranceProgress(entered, 0.25f, 0.5f);
         UIDraw.centered(batch, body, context.getGlyphLayout(),
             "AIM-TRAINER REACTION CLICKS.   ROULETTE-STYLE DUEL STRUCTURE.",
-            cx, 432f, Color.valueOf("888888"));
+            cx, 332f + UIDraw.slideUp(taglineP), Color.valueOf("888888"));
 
-        // Log panel
+        // Log panel — slide up (delay 0.35s)
+        float panelP = UIDraw.entranceProgress(entered, 0.35f, 0.5f);
+        float panelOffset = UIDraw.slideUp(panelP);
         float panelX = cx - 380f;
-        float panelY = 240f;
+        float panelY = 200f + panelOffset;
         float panelW = 760f;
         float panelH = 156f;
         UIDraw.redLeftPanel(batch, pixel, panelX, panelY, panelW, panelH);
 
-        body.setColor(Palette.TEXT_DIM);
-        body.draw(batch, "> SCREEN FLOW   : loading -> menu -> loadout -> match",   panelX + 20f, panelY + 134f);
-        body.draw(batch, "> INPUT SYSTEM  : mouse aim, click to return, R, ESC",    panelX + 20f, panelY + 110f);
-        body.draw(batch, "> DUEL ENGINE   : incoming ball, react, bot answers",     panelX + 20f, panelY + 86f);
-        body.draw(batch, "> LIVES         : [#][#][#][#][#]   default 5 per side", panelX + 20f, panelY + 62f);
-        body.draw(batch, "> MODIFIERS     : 1 item per side, bot pick stays hidden", panelX + 20f, panelY + 38f);
+        String[] logLines = {
+            "> SCREEN FLOW   : loading -> menu -> loadout -> match",
+            "> INPUT SYSTEM  : mouse aim, click to return, R, ESC",
+            "> DUEL ENGINE   : incoming ball, react, bot answers",
+            "> LIVES         : [#][#][#][#][#]   default 5 per side",
+            "> MODIFIERS     : 1 item per side, bot pick stays hidden",
+        };
+        for (int i = 0; i < logLines.length; i++) {
+            float lineP_ = UIDraw.entranceProgress(entered, 0.4f + i * 0.06f, 0.4f);
+            body.setColor(Palette.TEXT_DIM.r, Palette.TEXT_DIM.g, Palette.TEXT_DIM.b, lineP_);
+            body.draw(batch, logLines[i],
+                panelX + 20f, panelY + 134f - i * 24f + UIDraw.slideUp(lineP_));
+        }
 
-        // CTA: ENTER THE DUEL — drawn as a hollow red box with text
-        drawDangerButton(batch, pixel, body, "ENTER THE DUEL", cx, 168f);
+        // CTA — slide up (delay 0.7s)
+        float ctaP = UIDraw.entranceProgress(entered, 0.7f, 0.5f);
+        float ctaOffset = UIDraw.slideUp(ctaP);
+        drawDangerButton(batch, pixel, body, "ENTER THE DUEL", cx, 130f + ctaOffset);
 
-        // Ghost line below
+        // Ghost "settings" button below
+        float ghostP = UIDraw.entranceProgress(entered, 0.8f, 0.4f);
+        body.setColor(Palette.TEXT_DIM.r, Palette.TEXT_DIM.g, Palette.TEXT_DIM.b, ghostP);
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "> PRESS ENTER", cx, 118f, Palette.TEXT_DIM);
+            "> SETTINGS", cx, 96f + UIDraw.slideUp(ghostP), Palette.TEXT_DIM);
 
         batch.end();
     }
 
     private void drawRedGradientLine(SpriteBatch batch, Texture pixel, float cx, float y, float width) {
-        // Approximate the linear-gradient by stacking faded segments.
         int segments = 24;
         float segW = width / segments;
         for (int i = 0; i < segments; i++) {
             float t = (i + 0.5f) / segments;
-            float fade = 1f - Math.abs(t - 0.5f) * 2f; // peak in middle
+            float fade = 1f - Math.abs(t - 0.5f) * 2f;
             batch.setColor(Palette.RED.r, Palette.RED.g, Palette.RED.b, fade * 0.75f);
             batch.draw(pixel, cx - width * 0.5f + i * segW, y, segW, 2f);
         }

@@ -5,6 +5,7 @@ import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import io.github.some_example_name.Main;
+import io.github.some_example_name.assets.ProceduralAssets;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.config.Palette;
 
@@ -46,12 +47,16 @@ public final class LoadingScreen extends BaseScreen {
         Texture pixel = context.getLoadingPixel();
         BitmapFont title = context.getTitleFont();
         BitmapFont body  = context.getBodyFont();
+        ProceduralAssets visuals = context.getAssets().isReady()
+            ? context.getAssets().getProceduralAssets() : null;
 
         batch.begin();
 
-        // Subtle red grid + scanlines on pure black
+        // Subtle red grid + scanlines on pure black + film grain (once assets exist).
         UIDraw.redGrid(batch, pixel, 0.025f);
         UIDraw.scanlines(batch, pixel);
+        UIDraw.movingScanline(batch, pixel, clock, 6f);
+        if (visuals != null) UIDraw.filmGrain(batch, visuals.getNoise(), clock, 0.05f);
 
         // Top bar
         boolean blink = ((int) (clock * 2.5f)) % 2 == 0;

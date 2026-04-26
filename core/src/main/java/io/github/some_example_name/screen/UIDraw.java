@@ -5,6 +5,8 @@ import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import com.badlogic.gdx.graphics.g2d.TextureRegion;
+import com.badlogic.gdx.math.MathUtils;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.config.Palette;
 
@@ -122,5 +124,85 @@ public final class UIDraw {
     public static float textWidth(BitmapFont font, GlyphLayout layout, String text) {
         layout.setText(font, text);
         return layout.width;
+    }
+
+    /**
+     * Single bright horizontal line that sweeps top-to-bottom every {@code period}
+     * seconds — the design's {@code <ScanLine />} component.
+     */
+    public static void movingScanline(SpriteBatch batch, Texture pixel, float clock, float period) {
+        float t = (clock % period) / period;
+        float y = GameConfig.WORLD_HEIGHT * (1f - t);
+        batch.setColor(1f, 1f, 1f, 0.04f);
+        batch.draw(pixel, 0f, y, GameConfig.WORLD_WIDTH, 3f);
+        batch.setColor(Color.WHITE);
+    }
+
+    /**
+     * Film-grain overlay: tile the noise texture at a random shifting offset to fake
+     * the design's {@code @keyframes grainShift} animation.
+     */
+    public static void filmGrain(SpriteBatch batch, Texture noise, float clock, float opacity) {
+        // Step the offset in 0.12s intervals so it visibly chunks instead of smoothly scrolling.
+        int frame = (int) (clock / 0.12f);
+        float ox = ((frame * 47) % 200);
+        float oy = ((frame * 91) % 200);
+        TextureRegion region = new TextureRegion(noise);
+        region.setRegion(ox, oy, GameConfig.WORLD_WIDTH, GameConfig.WORLD_HEIGHT);
+        batch.setColor(1f, 1f, 1f, opacity);
+        batch.draw(region, 0f, 0f, GameConfig.WORLD_WIDTH, GameConfig.WORLD_HEIGHT);
+        batch.setColor(Color.WHITE);
+    }
+
+    /**
+     * Glitching title: ghost layer in red offset and flickering, plus the main
+     * white layer with a subtle flicker. Mirrors the design's
+     * {@code @keyframes glitch1 / glitch2 / flicker}.
+     */
+    public static void glitchTitle(SpriteBatch batch, BitmapFont font, GlyphLayout layout,
+                                   String text, float centerX, float y, float scale, float clock) {
+        float prevScale = font.getData().scaleX;
+        font.getData().setScale(scale);
+        layout.setText(font, text);
+        float w = layout.width;
+
+        float cycle = clock % 7f;
+        boolean glitchSlice = cycle > 6.37f && cycle < 6.65f;
+        boolean flicker     = (cycle > 3.92f && cycle < 3.95f) || (cycle > 5.48f && cycle < 5.52f);
+
+        // Ghost red layer (always visible, faint)
+        font.setColor(Palette.RED.r, Palette.RED.g, Palette.RED.b, 0.32f);
+        font.draw(batch, text, centerX - w * 0.5f - (glitchSlice ? 5f : 2f), y);
+
+        // Periodic glitch — extra red ghost, jittered
+        if (glitchSlice) {
+            font.setColor(Palette.RED.r, Palette.RED.g, Palette.RED.b, 0.7f);
+            font.draw(batch, text, centerX - w * 0.5f + 4f, y - 2f);
+        }
+
+        // Main white layer
+        float alpha = flicker ? 0.55f : 0.96f;
+        float jitterX = glitchSlice ? MathUtils.sin(clock * 60f) * 2f : 0f;
+        font.setColor(Palette.TEXT.r, Palette.TEXT.g, Palette.TEXT.b, alpha);
+        font.draw(batch, text, centerX - w * 0.5f + jitterX, y);
+
+        font.getData().setScale(prevScale);
+        font.setColor(Color.WHITE);
+    }
+
+    /** 0..1 ease for entrance animations. delay/duration in seconds. */
+    public static float entranceProgress(float elapsed, float delay, float duration) {
+        if (duration <= 0f) return 1f;
+        return MathUtils.clamp((elapsed - delay) / duration, 0f, 1f);
+    }
+
+    /** Slide-up offset (positive when entering): starts at +14, ends at 0. */
+    public static float slideUp(float progress) {
+        return (1f - progress) * 14f;
+    }
+
+    /** Slide-down offset (positive when entering): starts at -14, ends at 0. */
+    public static float slideDown(float progress) {
+        return -(1f - progress) * 14f;
     }
 }

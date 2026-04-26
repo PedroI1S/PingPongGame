@@ -22,6 +22,7 @@ public final class LoadoutScreen extends BaseScreen {
     private final LoadoutInputProcessor inputProcessor;
     private int selectedIndex;
     private float clock;
+    private float entered;
 
     public LoadoutScreen(Main game) {
         super(game);
@@ -31,6 +32,7 @@ public final class LoadoutScreen extends BaseScreen {
     @Override
     public void show() {
         selectedIndex = 0;
+        entered = 0f;
         Gdx.input.setInputProcessor(inputProcessor);
     }
 
@@ -38,7 +40,8 @@ public final class LoadoutScreen extends BaseScreen {
 
     @Override
     public void render(float delta) {
-        clock += delta;
+        clock   += delta;
+        entered += delta;
         beginFrame(Palette.BG.r, Palette.BG.g, Palette.BG.b);
         SpriteBatch batch = context.getBatch();
         ProceduralAssets visuals = context.getAssets().getProceduralAssets();
@@ -52,6 +55,8 @@ public final class LoadoutScreen extends BaseScreen {
         batch.draw(visuals.getBackground(), 0f, 0f, GameConfig.WORLD_WIDTH, GameConfig.WORLD_HEIGHT);
         UIDraw.redGrid(batch, pixel, 0.05f);
         UIDraw.scanlines(batch, pixel);
+        UIDraw.movingScanline(batch, pixel, clock, 6f);
+        UIDraw.filmGrain(batch, visuals.getNoise(), clock, 0.05f);
         UIDraw.cornerMarks(batch, pixel, 24f);
 
         UIDraw.topBar(batch, pixel, body, context.getGlyphLayout(),
@@ -62,24 +67,32 @@ public final class LoadoutScreen extends BaseScreen {
 
         float cx = GameConfig.WORLD_WIDTH * 0.5f;
 
-        // Heading
+        // Heading — slide down
+        float eyebrowP = UIDraw.entranceProgress(entered, 0f, 0.4f);
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "===  PRE-MATCH DRAFT  ===", cx, 644f, Palette.RED);
+            "===  PRE-MATCH DRAFT  ===",
+            cx, 644f - UIDraw.slideDown(eyebrowP), Palette.RED);
 
-        title.getData().setScale(2.2f);
+        float titleP = UIDraw.entranceProgress(entered, 0.05f, 0.4f);
+        title.getData().setScale(2.6f);
         UIDraw.centered(batch, title, context.getGlyphLayout(),
-            "CHOOSE YOUR EDGE", cx, 600f, Palette.TEXT);
+            "CHOOSE YOUR EDGE",
+            cx, 600f - UIDraw.slideDown(titleP), Palette.TEXT);
+        title.getData().setScale(2.2f);
 
+        float subP = UIDraw.entranceProgress(entered, 0.1f, 0.4f);
         UIDraw.centered(batch, body, context.getGlyphLayout(),
             "THE BOT DRAWS ONE TOO -- YOU WON'T SEE WHICH.",
-            cx, 568f, Color.valueOf("555555"));
+            cx, 568f - UIDraw.slideDown(subP), Color.valueOf("555555"));
 
-        // Cards
+        // Cards — staggered slide-in from the right
         var items = context.getSession().getOfferedItems();
         float totalW = items.size * CARD_WIDTH + (items.size - 1) * CARD_GAP;
         float startX = cx - totalW * 0.5f;
         for (int i = 0; i < items.size; i++) {
-            float x = startX + i * (CARD_WIDTH + CARD_GAP);
+            float cardP = UIDraw.entranceProgress(entered, 0.1f + i * 0.08f, 0.4f);
+            float slideX = (1f - cardP) * 30f;
+            float x = startX + i * (CARD_WIDTH + CARD_GAP) + slideX;
             drawCard(batch, pixel, title, body, items.get(i), x, CARD_Y, i == selectedIndex);
         }
 
