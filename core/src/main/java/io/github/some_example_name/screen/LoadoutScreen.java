@@ -15,9 +15,9 @@ import io.github.some_example_name.model.ItemDefinition;
 
 public final class LoadoutScreen extends BaseScreen {
     private static final float CARD_WIDTH  = 280f;
-    private static final float CARD_HEIGHT = 360f;
+    private static final float CARD_HEIGHT = 320f;
     private static final float CARD_GAP    = 32f;
-    private static final float CARD_Y      = 200f;
+    private static final float CARD_Y      = 195f;
 
     private final LoadoutInputProcessor inputProcessor;
     private int selectedIndex;
@@ -71,19 +71,19 @@ public final class LoadoutScreen extends BaseScreen {
         float eyebrowP = UIDraw.entranceProgress(entered, 0f, 0.4f);
         UIDraw.centered(batch, body, context.getGlyphLayout(),
             "===  PRE-MATCH DRAFT  ===",
-            cx, 644f - UIDraw.slideDown(eyebrowP), Palette.RED);
+            cx, 660f - UIDraw.slideDown(eyebrowP), Palette.RED);
 
         float titleP = UIDraw.entranceProgress(entered, 0.05f, 0.4f);
-        title.getData().setScale(2.6f);
+        title.getData().setScale(2.2f);
         UIDraw.centered(batch, title, context.getGlyphLayout(),
             "CHOOSE YOUR EDGE",
-            cx, 600f - UIDraw.slideDown(titleP), Palette.TEXT);
+            cx, 615f - UIDraw.slideDown(titleP), Palette.TEXT);
         title.getData().setScale(2.2f);
 
         float subP = UIDraw.entranceProgress(entered, 0.1f, 0.4f);
         UIDraw.centered(batch, body, context.getGlyphLayout(),
             "THE BOT DRAWS ONE TOO -- YOU WON'T SEE WHICH.",
-            cx, 568f - UIDraw.slideDown(subP), Color.valueOf("555555"));
+            cx, 555f - UIDraw.slideDown(subP), Color.valueOf("555555"));
 
         // Cards — staggered slide-in from the right
         var items = context.getSession().getOfferedItems();
@@ -96,13 +96,16 @@ public final class LoadoutScreen extends BaseScreen {
             drawCard(batch, pixel, title, body, items.get(i), x, CARD_Y, i == selectedIndex);
         }
 
-        // Confirm row
+        // Confirm row — selected label sits between cards bottom (y=195)
+        // and confirm button top (y=120). Body font is ~16 px tall so y=160
+        // gives ~25 px of breathing room from the cards above and ~25 px
+        // from the button border below.
         if (items.size > 0) {
             ItemDefinition sel = items.get(selectedIndex);
             String label = sel.getName().toUpperCase() + " -- " + sel.getSummary().toUpperCase();
             UIDraw.centered(batch, body, context.getGlyphLayout(),
-                label, cx, 162f, sel.getAccent());
-            drawConfirmButton(batch, pixel, body, "ENTER THE DUEL ->", cx, 110f, sel.getAccent());
+                label, cx, 160f, sel.getAccent());
+            drawConfirmButton(batch, pixel, body, "ENTER THE DUEL ->", cx, 70f, sel.getAccent());
         }
 
         batch.end();
