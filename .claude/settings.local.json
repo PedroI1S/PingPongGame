@@ -13,7 +13,13 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(./gradlew :lwjgl3:compileJava)",
-      "Bash(./gradlew :core:compileJava :lwjgl3:compileJava)"
+      "Bash(./gradlew :core:compileJava :lwjgl3:compileJava)",
+      "WebFetch(domain:api.anthropic.com)",
+      "Bash(mkdir -p /tmp/design_unpack)",
+      "Bash(rm -rf *)",
+      "Bash(tar -xzf /Users/pedro_mariano/.claude/projects/-Users-pedro-mariano-Documents-7-semestre-DesenvolvimentoJogosSim-versoes-libgdx-PingPongGame/b5139e2a-ad5f-49ca-89eb-f42f3d617ef5/tool-results/webfetch-1777171234483-si8y5c.bin)",
+      "Bash(gunzip -c /Users/pedro_mariano/.claude/projects/-Users-pedro-mariano-Documents-7-semestre-DesenvolvimentoJogosSim-versoes-libgdx-PingPongGame/b5139e2a-ad5f-49ca-89eb-f42f3d617ef5/tool-results/webfetch-1777171234483-si8y5c.bin)",
+      "Bash(tar -xf payload)"
     ]
   }
 }

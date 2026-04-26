@@ -282,9 +282,9 @@ public final class ProceduralAssets implements Disposable {
 
     private static Texture createBackgroundTexture() {
         Pixmap pixmap = new Pixmap(64, 256, Pixmap.Format.RGBA8888);
-        Color top = Color.valueOf("06131A");
-        Color bottom = Color.valueOf("102932");
-        Color line = Color.valueOf("173D44");
+        Color top    = Color.valueOf("080808");
+        Color bottom = Color.valueOf("050505");
+        Color line   = Color.valueOf("3A0F18");
 
         for (int y = 0; y < pixmap.getHeight(); y++) {
             float t = y / (float) (pixmap.getHeight() - 1);
@@ -293,8 +293,9 @@ public final class ProceduralAssets implements Disposable {
             float b = top.b + (bottom.b - top.b) * t;
             pixmap.setColor(r, g, b, 1f);
             pixmap.drawLine(0, y, pixmap.getWidth() - 1, y);
+            // Faint red scanline every 12 px for the apocalyptic feel.
             if (y % 12 == 0) {
-                pixmap.setColor(line.r, line.g, line.b, 0.55f);
+                pixmap.setColor(line.r, line.g, line.b, 0.35f);
                 pixmap.drawLine(0, y, pixmap.getWidth() - 1, y);
             }
         }

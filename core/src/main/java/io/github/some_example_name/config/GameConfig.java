@@ -2,7 +2,7 @@ package io.github.some_example_name.config;
 
 /** Shared constants for the prototype foundation. */
 public final class GameConfig {
-    public static final String GAME_TITLE = "Aim Roulette Pong";
+    public static final String GAME_TITLE = "Aim Roulette Pong -- Menu";
 
     public static final float WORLD_WIDTH = 1280f;
     public static final float WORLD_HEIGHT = 720f;

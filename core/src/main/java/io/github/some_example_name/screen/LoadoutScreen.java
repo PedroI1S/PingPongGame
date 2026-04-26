@@ -2,22 +2,26 @@ package io.github.some_example_name.screen;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.Texture;
+import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.utils.Align;
 import io.github.some_example_name.Main;
 import io.github.some_example_name.assets.ProceduralAssets;
 import io.github.some_example_name.config.GameConfig;
+import io.github.some_example_name.config.Palette;
 import io.github.some_example_name.input.LoadoutInputProcessor;
 import io.github.some_example_name.model.ItemDefinition;
 
 public final class LoadoutScreen extends BaseScreen {
-    private static final float CARD_WIDTH = 300f;
-    private static final float CARD_HEIGHT = 330f;
-    private static final float CARD_Y = 210f;
-    private static final float CARD_GAP = 40f;
+    private static final float CARD_WIDTH  = 280f;
+    private static final float CARD_HEIGHT = 360f;
+    private static final float CARD_GAP    = 32f;
+    private static final float CARD_Y      = 200f;
 
     private final LoadoutInputProcessor inputProcessor;
     private int selectedIndex;
+    private float clock;
 
     public LoadoutScreen(Main game) {
         super(game);
@@ -30,81 +34,133 @@ public final class LoadoutScreen extends BaseScreen {
         Gdx.input.setInputProcessor(inputProcessor);
     }
 
-    @Override
-    public void hide() {
-        Gdx.input.setInputProcessor(null);
-    }
+    @Override public void hide() { Gdx.input.setInputProcessor(null); }
 
     @Override
     public void render(float delta) {
-        beginFrame(0.02f, 0.06f, 0.08f);
+        clock += delta;
+        beginFrame(Palette.BG.r, Palette.BG.g, Palette.BG.b);
         SpriteBatch batch = context.getBatch();
         ProceduralAssets visuals = context.getAssets().getProceduralAssets();
+        Texture pixel = visuals.getPixel();
+        BitmapFont title = context.getTitleFont();
+        BitmapFont body  = context.getBodyFont();
 
         batch.begin();
+
         batch.setColor(Color.WHITE);
         batch.draw(visuals.getBackground(), 0f, 0f, GameConfig.WORLD_WIDTH, GameConfig.WORLD_HEIGHT);
+        UIDraw.redGrid(batch, pixel, 0.05f);
+        UIDraw.scanlines(batch, pixel);
+        UIDraw.cornerMarks(batch, pixel, 24f);
 
-        drawCentered(batch, context.getTitleFont(), "Choose Your Opening Edge", GameConfig.WORLD_WIDTH * 0.5f, 640f, Color.valueOf("ECFFFC"));
-        drawCentered(
-            batch,
-            context.getBodyFont(),
-            "The bot also draws one modifier. Pick the tool you want before the reaction duel starts.",
-            GameConfig.WORLD_WIDTH * 0.5f,
-            596f,
-            Color.valueOf("96CDD0")
-        );
+        UIDraw.topBar(batch, pixel, body, context.getGlyphLayout(),
+            "<- BACK TO MENU (ESC)", "PHASE // LOADOUT", Palette.TEXT_DIM);
+        UIDraw.bottomBar(batch, pixel, body, context.getGlyphLayout(),
+            "LEFT/RIGHT TO CHANGE CARD -- ENTER TO LOCK IN",
+            "BOT ITEM: [REDACTED]", Palette.TEXT_DIM);
 
-        for (int i = 0; i < context.getSession().getOfferedItems().size; i++) {
-            float x = 150f + i * (CARD_WIDTH + CARD_GAP);
-            drawCard(batch, visuals, context.getSession().getOfferedItems().get(i), x, CARD_Y, i == selectedIndex);
+        float cx = GameConfig.WORLD_WIDTH * 0.5f;
+
+        // Heading
+        UIDraw.centered(batch, body, context.getGlyphLayout(),
+            "===  PRE-MATCH DRAFT  ===", cx, 644f, Palette.RED);
+
+        title.getData().setScale(2.2f);
+        UIDraw.centered(batch, title, context.getGlyphLayout(),
+            "CHOOSE YOUR EDGE", cx, 600f, Palette.TEXT);
+
+        UIDraw.centered(batch, body, context.getGlyphLayout(),
+            "THE BOT DRAWS ONE TOO -- YOU WON'T SEE WHICH.",
+            cx, 568f, Color.valueOf("555555"));
+
+        // Cards
+        var items = context.getSession().getOfferedItems();
+        float totalW = items.size * CARD_WIDTH + (items.size - 1) * CARD_GAP;
+        float startX = cx - totalW * 0.5f;
+        for (int i = 0; i < items.size; i++) {
+            float x = startX + i * (CARD_WIDTH + CARD_GAP);
+            drawCard(batch, pixel, title, body, items.get(i), x, CARD_Y, i == selectedIndex);
         }
 
-        context.getBodyFont().setColor(Color.valueOf("A4E6D7"));
-        context.getBodyFont().draw(batch, "LEFT / RIGHT to change card, ENTER to lock in, ESC to go back.", 170f, 150f);
-        context.getBodyFont().draw(batch, "The bot item stays hidden so the first incoming shots still have some tension.", 170f, 118f);
+        // Confirm row
+        if (items.size > 0) {
+            ItemDefinition sel = items.get(selectedIndex);
+            String label = sel.getName().toUpperCase() + " -- " + sel.getSummary().toUpperCase();
+            UIDraw.centered(batch, body, context.getGlyphLayout(),
+                label, cx, 162f, sel.getAccent());
+            drawConfirmButton(batch, pixel, body, "ENTER THE DUEL ->", cx, 110f, sel.getAccent());
+        }
+
         batch.end();
     }
 
-    private void drawCard(SpriteBatch batch, ProceduralAssets visuals, ItemDefinition item, float x, float y, boolean selected) {
+    private void drawCard(SpriteBatch batch, Texture pixel, BitmapFont title, BitmapFont body,
+                          ItemDefinition item, float x, float y, boolean selected) {
         Color accent = item.getAccent();
-        batch.setColor(selected ? Color.valueOf("17474E") : Color.valueOf("113137"));
-        batch.draw(visuals.getPanel(), x, y, CARD_WIDTH, CARD_HEIGHT);
 
-        batch.setColor(accent);
-        batch.draw(visuals.getPixel(), x, y + CARD_HEIGHT - 10f, CARD_WIDTH, 10f);
-        batch.draw(visuals.getPixel(), x, y, selected ? 6f : 3f, CARD_HEIGHT);
-        batch.draw(visuals.getPixel(), x + CARD_WIDTH - (selected ? 6f : 3f), y, selected ? 6f : 3f, CARD_HEIGHT);
-
-        context.getBodyFont().setColor(Color.valueOf("E9FFFC"));
-        context.getBodyFont().draw(batch, item.getName(), x + 24f, y + CARD_HEIGHT - 36f);
-
-        context.getBodyFont().setColor(accent);
-        context.getBodyFont().draw(batch, item.getSummary(), x + 24f, y + CARD_HEIGHT - 76f, CARD_WIDTH - 48f, Align.left, true);
-
-        context.getBodyFont().setColor(Color.valueOf("C6E2E5"));
-        context.getBodyFont().draw(batch, item.getDetail(), x + 24f, y + 150f, CARD_WIDTH - 48f, Align.left, true);
-
+        // Card surface
+        UIDraw.fill(batch, pixel, Palette.SURFACE, x, y, CARD_WIDTH, CARD_HEIGHT);
         if (selected) {
-            context.getBodyFont().setColor(Color.valueOf("FFF0B8"));
-            context.getBodyFont().draw(batch, "SELECTED", x + 24f, y + 44f);
+            UIDraw.fill(batch, pixel, accent, 0.06f, x, y, CARD_WIDTH, CARD_HEIGHT);
+            UIDraw.border(batch, pixel, accent, x, y, CARD_WIDTH, CARD_HEIGHT, 1f);
+        } else {
+            UIDraw.border(batch, pixel, Palette.BORDER, x, y, CARD_WIDTH, CARD_HEIGHT, 1f);
         }
 
-        batch.setColor(Color.WHITE);
+        // Top accent bar
+        UIDraw.fill(batch, pixel, accent, x, y + CARD_HEIGHT - (selected ? 4f : 2f),
+            CARD_WIDTH, selected ? 4f : 2f);
+
+        // Item name
+        title.getData().setScale(1.6f);
+        title.setColor(selected ? Palette.TEXT : Color.valueOf("666666"));
+        title.draw(batch, item.getName().toUpperCase(), x + 20f, y + CARD_HEIGHT - 32f);
+        title.getData().setScale(2.2f);
+
+        // Summary in accent color
+        body.setColor(accent.r, accent.g, accent.b, selected ? 1f : 0.55f);
+        body.draw(batch, item.getSummary().toUpperCase(),
+            x + 20f, y + CARD_HEIGHT - 80f, CARD_WIDTH - 40f, Align.left, true);
+
+        // Divider
+        UIDraw.fill(batch, pixel, selected ? accent : Palette.BORDER,
+            selected ? 0.27f : 1f, x + 20f, y + CARD_HEIGHT - 138f, CARD_WIDTH - 40f, 1f);
+
+        // Detail text
+        body.setColor(selected ? Color.valueOf("999999") : Color.valueOf("444444"));
+        body.draw(batch, item.getDetail(),
+            x + 20f, y + CARD_HEIGHT - 154f, CARD_WIDTH - 40f, Align.left, true);
+
+        // "LOCKED IN" footer when selected
+        if (selected) {
+            UIDraw.fill(batch, pixel, accent, 0.08f, x, y, CARD_WIDTH, 30f);
+            UIDraw.fill(batch, pixel, accent, 0.33f, x, y + 30f, CARD_WIDTH, 1f);
+            body.setColor(accent);
+            UIDraw.centered(batch, body, context.getGlyphLayout(),
+                "[ LOCKED IN ]", x + CARD_WIDTH * 0.5f, y + 20f, accent);
+        }
+    }
+
+    private void drawConfirmButton(SpriteBatch batch, Texture pixel, BitmapFont font,
+                                   String text, float centerX, float y, Color accent) {
+        float w = 380f, h = 48f;
+        float x = centerX - w * 0.5f;
+        UIDraw.fill(batch, pixel, accent, 0.10f, x, y, w, h);
+        UIDraw.border(batch, pixel, accent, x, y, w, h, 2f);
+        UIDraw.centered(batch, font, context.getGlyphLayout(), text, centerX, y + 30f, accent);
     }
 
     private void moveLeft() {
-        selectedIndex--;
-        if (selectedIndex < 0) {
-            selectedIndex = context.getSession().getOfferedItems().size - 1;
-        }
+        var items = context.getSession().getOfferedItems();
+        if (items.size == 0) return;
+        selectedIndex = (selectedIndex - 1 + items.size) % items.size;
     }
 
     private void moveRight() {
-        selectedIndex++;
-        if (selectedIndex >= context.getSession().getOfferedItems().size) {
-            selectedIndex = 0;
-        }
+        var items = context.getSession().getOfferedItems();
+        if (items.size == 0) return;
+        selectedIndex = (selectedIndex + 1) % items.size;
     }
 
     private void confirm() {

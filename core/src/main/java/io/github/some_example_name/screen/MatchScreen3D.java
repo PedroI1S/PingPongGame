@@ -25,18 +25,19 @@ import com.badlogic.gdx.math.collision.Ray;
 import com.badlogic.gdx.utils.ScreenUtils;
 import io.github.some_example_name.Main;
 import io.github.some_example_name.config.GameConfig;
+import io.github.some_example_name.config.Palette;
 import io.github.some_example_name.model.ItemDefinition;
 import io.github.some_example_name.model.MatchOutcome;
 import io.github.some_example_name.world.ImpactParticle3D;
 import io.github.some_example_name.world.MatchWorld3D;
 
 public final class MatchScreen3D extends BaseScreen {
-    private static final Color HUD_TEXT_COLOR     = Color.valueOf("E9FFFC");
-    private static final Color HUD_STATS_COLOR    = Color.valueOf("A9DCE1");
-    private static final Color HUD_STATUS_COLOR   = Color.valueOf("FFF0B8");
-    private static final Color HUD_HINT_COLOR     = Color.valueOf("A4E6D7");
-    private static final Color OUTCOME_TITLE      = Color.valueOf("ECFFFC");
-    private static final Color OUTCOME_SUBTITLE   = Color.valueOf("B7DFE4");
+    private static final Color HUD_TEXT_COLOR   = Palette.TEXT;
+    private static final Color HUD_STATS_COLOR  = Palette.TEXT_DIM;
+    private static final Color HUD_STATUS_COLOR = Palette.RED;
+    private static final Color HUD_HINT_COLOR   = Palette.TEXT_DIM;
+    private static final Color OUTCOME_TITLE    = Palette.TEXT;
+    private static final Color OUTCOME_SUBTITLE = Palette.TEXT_DIM;
 
     private MatchWorld3D world;
     private PerspectiveCamera camera3D;

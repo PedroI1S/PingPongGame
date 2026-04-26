@@ -12,42 +12,42 @@ public final class ItemCatalog {
     private final List<ItemDefinition> items = List.of(
         new ItemDefinition(
             "patch_kit",
-            "Patch Kit",
-            "+1 life before the duel starts.",
-            "Safe pick when you want a little more room for mistakes.",
-            Color.valueOf("76F7B8"),
+            "PATCH KIT",
+            "+1 LIFE BEFORE THE DUEL",
+            "Safe pick when you want extra room for mistakes. Forgiveness costs you nothing -- until it does.",
+            Color.valueOf("4ADE80"),
             (config, side) -> config.getFighter(side).addLives(1)
         ),
         new ItemDefinition(
             "focus_lens",
-            "Focus Lens",
-            "Incoming balls are easier to click.",
-            "The target grows more generously, which fits the aim-trainer side of the idea.",
-            Color.valueOf("FFD36B"),
+            "FOCUS LENS",
+            "WIDER HIT WINDOW",
+            "Target grows more generously. The aim-trainer becomes kinder. Kindness is a trap.",
+            Color.valueOf("FBBF24"),
             (config, side) -> config.getFighter(side).addTargetScaleMultiplier(0.22f)
         ),
         new ItemDefinition(
             "time_buffer",
-            "Time Buffer",
-            "Balls take longer to reach you.",
-            "Useful for keeping the reaction window readable as the tempo climbs.",
-            Color.valueOf("78D9FF"),
+            "TIME BUFFER",
+            "BALLS ARRIVE SLOWER",
+            "Extends the reaction window before tempo climbs. Buys time. Time always runs out.",
+            Color.valueOf("60A5FA"),
             (config, side) -> config.getFighter(side).addIncomingTimeMultiplier(0.15f)
         ),
         new ItemDefinition(
             "smash_core",
-            "Smash Core",
-            "Your successful clicks pressure the bot more.",
-            "A cleaner offensive option for a duel where returning is about reaction strength, not paddle angle.",
-            Color.valueOf("FF8FB3"),
+            "SMASH CORE",
+            "MORE PRESSURE ON THE BOT",
+            "Each successful click hits harder. Offense first, consequences second.",
+            Color.valueOf("F472B6"),
             (config, side) -> config.getFighter(side).addReturnPowerMultiplier(0.22f)
         ),
         new ItemDefinition(
             "heat_sink",
-            "Heat Sink",
-            "The pace ramps up more slowly over the whole match.",
-            "Good for a foundation build where readability matters more than chaos.",
-            Color.valueOf("B0FFEE"),
+            "HEAT SINK",
+            "PACE RAMPS UP SLOWER",
+            "Keeps chaos at bay a little longer. Good for when readability matters more than speed.",
+            Color.valueOf("2DD4BF"),
             (config, side) -> config.addApproachDurationDecay(-0.02f)
         )
     );
