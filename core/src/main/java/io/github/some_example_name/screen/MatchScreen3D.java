@@ -3,6 +3,8 @@ package io.github.some_example_name.screen;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.InputAdapter;
+import com.badlogic.gdx.audio.Music;
+import com.badlogic.gdx.audio.Sound;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.PerspectiveCamera;
@@ -16,6 +18,8 @@ import com.badlogic.gdx.graphics.g3d.ModelInstance;
 import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
+import com.badlogic.gdx.math.MathUtils;
+import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.Ray;
 import com.badlogic.gdx.utils.ScreenUtils;
@@ -23,6 +27,7 @@ import io.github.some_example_name.Main;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.model.ItemDefinition;
 import io.github.some_example_name.model.MatchOutcome;
+import io.github.some_example_name.world.ImpactParticle3D;
 import io.github.some_example_name.world.MatchWorld3D;
 
 public final class MatchScreen3D extends BaseScreen {
@@ -50,6 +55,22 @@ public final class MatchScreen3D extends BaseScreen {
     private Input3D input;
     private boolean outcomeRecorded;
 
+    private Sound paddleHitSfx;
+    private Sound tableHitSfx;
+    private Music backgroundMusic;
+
+    // ── camera control state ────────────────────────────────────────────────
+    private static final float CAMERA_TRANSLATE_SPEED = 6f;        // units per second
+    private static final float CAMERA_MIN_DISTANCE    = 6f;
+    private static final float CAMERA_MAX_DISTANCE    = 18f;
+    private final Vector3 cameraTarget = new Vector3(0f, MatchWorld3D.TABLE_TOP_Y, 0f);
+    private final Vector3 cameraOffset = new Vector3(0f, 2.5f, 11f);
+
+    // ── reusable buffers for project()/unproject() ──────────────────────────
+    private final Vector3 worldToScreen = new Vector3();
+    private final Vector3 screenToWorld = new Vector3();
+    private final Vector2 cursorOnTable = new Vector2();
+
     public MatchScreen3D(Main game) {
         super(game);
     }
@@ -60,11 +81,11 @@ public final class MatchScreen3D extends BaseScreen {
         outcomeRecorded = false;
 
         camera3D = new PerspectiveCamera(60f, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
-        camera3D.position.set(0f, 4.5f, 11f);
-        camera3D.lookAt(0f, MatchWorld3D.TABLE_TOP_Y, 0f);
         camera3D.near = 0.1f;
         camera3D.far  = 100f;
-        camera3D.update();
+        cameraTarget.set(0f, MatchWorld3D.TABLE_TOP_Y, 0f);
+        cameraOffset.set(0f, 2.5f, 11f);
+        applyCameraTransform();
 
         modelBatch = new ModelBatch();
         environment = new Environment();
@@ -74,6 +95,13 @@ public final class MatchScreen3D extends BaseScreen {
         buildModels();
         input = new Input3D();
         Gdx.input.setInputProcessor(input);
+
+        paddleHitSfx    = context.getAssets().getBallHitSfx();
+        tableHitSfx     = context.getAssets().getTableHitSfx();
+        backgroundMusic = context.getAssets().getBackgroundMusic();
+        backgroundMusic.setLooping(true);
+        backgroundMusic.setVolume(0.25f);
+        backgroundMusic.play();
     }
 
     private void buildModels() {
@@ -122,6 +150,7 @@ public final class MatchScreen3D extends BaseScreen {
     @Override
     public void hide() {
         Gdx.input.setInputProcessor(null);
+        if (backgroundMusic != null) backgroundMusic.stop();
     }
 
     @Override
@@ -139,12 +168,22 @@ public final class MatchScreen3D extends BaseScreen {
         if (input.consumeMenu())    { game.openMenu();  return; }
         if (input.consumeRestart()) { game.openMatch(); return; }
 
+        updateCameraControl(delta);
+
         if (input.consumeClick()) {
             Ray ray = camera3D.getPickRay(input.lastClickX, input.lastClickY);
             world.tryHitBall(ray);
         }
 
+        // Use unproject to project the cursor onto the table plane (y = TABLE_TOP_Y).
+        // The result is a 2D world-space coordinate stored in cursorOnTable —
+        // used to draw a debug aim crosshair on the table surface in the HUD.
+        unprojectCursorOntoTable();
+
         world.update(delta);
+        if (world.consumePaddleHitEvent())   paddleHitSfx.play(0.7f);
+        if (world.consumeTableBounceEvent()) tableHitSfx.play(0.6f);
+
         if (world.isMatchOver() && !outcomeRecorded) {
             context.getSession().setLastOutcome(world.getOutcome());
             outcomeRecorded = true;
@@ -172,11 +211,117 @@ public final class MatchScreen3D extends BaseScreen {
         SpriteBatch batch = context.getBatch();
         batch.setProjectionMatrix(context.getViewport().getCamera().combined);
         batch.begin();
+        drawCursorOnTableMarker(batch);
+        drawParticles(batch);
         drawHud(batch);
         if (world.isMatchOver()) {
             drawOutcomeOverlay(batch);
         }
         batch.end();
+    }
+
+    /** Recomputes camera.position = target + offset and refreshes the matrices. */
+    private void applyCameraTransform() {
+        camera3D.position.set(cameraTarget).add(cameraOffset);
+        camera3D.lookAt(cameraTarget);
+        camera3D.up.set(0f, 1f, 0f);
+        camera3D.update();
+    }
+
+    /** WASD translates the look target on XZ; mouse wheel zooms by scaling cameraOffset. */
+    private void updateCameraControl(float delta) {
+        float dx = 0f, dz = 0f;
+        if (Gdx.input.isKeyPressed(Input.Keys.A)) dx -= 1f;
+        if (Gdx.input.isKeyPressed(Input.Keys.D)) dx += 1f;
+        if (Gdx.input.isKeyPressed(Input.Keys.W)) dz -= 1f;
+        if (Gdx.input.isKeyPressed(Input.Keys.S)) dz += 1f;
+
+        if (dx != 0f || dz != 0f) {
+            float len = (float) Math.sqrt(dx * dx + dz * dz);
+            cameraTarget.x += (dx / len) * CAMERA_TRANSLATE_SPEED * delta;
+            cameraTarget.z += (dz / len) * CAMERA_TRANSLATE_SPEED * delta;
+            cameraTarget.x = MathUtils.clamp(cameraTarget.x, -8f, 8f);
+            cameraTarget.z = MathUtils.clamp(cameraTarget.z, -10f, 14f);
+        }
+
+        float scroll = input.consumeScroll();
+        if (scroll != 0f) {
+            float currentDist = cameraOffset.len();
+            float newDist = MathUtils.clamp(currentDist + scroll * 1.2f,
+                                            CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
+            cameraOffset.scl(newDist / currentDist);
+        }
+
+        applyCameraTransform();
+    }
+
+    /**
+     * Demonstrates {@code camera.unproject(...)}: takes the current cursor in
+     * screen pixels, builds a world-space ray, and intersects it analytically
+     * with the table-top plane (y = TABLE_TOP_Y). The XZ result lands in
+     * {@link #cursorOnTable} for the HUD draw.
+     */
+    private void unprojectCursorOntoTable() {
+        screenToWorld.set(input.lastMouseX, input.lastMouseY, 0f);
+        camera3D.unproject(screenToWorld);
+
+        Vector3 origin = camera3D.position;
+        float dirX = screenToWorld.x - origin.x;
+        float dirY = screenToWorld.y - origin.y;
+        float dirZ = screenToWorld.z - origin.z;
+        if (Math.abs(dirY) < 0.0001f) { cursorOnTable.set(Float.NaN, Float.NaN); return; }
+        float t = (MatchWorld3D.TABLE_TOP_Y - origin.y) / dirY;
+        if (t <= 0f) { cursorOnTable.set(Float.NaN, Float.NaN); return; }
+        cursorOnTable.set(origin.x + dirX * t, origin.z + dirZ * t);
+    }
+
+    /**
+     * Draws each {@link ImpactParticle3D} as a small 2D dot in HUD space —
+     * uses {@code camera.project(...)} to convert the particle's 3D world
+     * position into screen pixels, then maps those pixels back into the
+     * 2D viewport's world coordinates so the SpriteBatch draws them correctly.
+     */
+    private void drawParticles(SpriteBatch batch) {
+        for (ImpactParticle3D p : world.getParticles()) {
+            worldToScreen.set(p.getPosition());
+            camera3D.project(worldToScreen);
+            if (worldToScreen.z < 0f || worldToScreen.z > 1f) continue;
+
+            float screenPxX = worldToScreen.x;
+            float screenPxY = worldToScreen.y;
+            float hudX = screenPxX / Gdx.graphics.getWidth() * GameConfig.WORLD_WIDTH;
+            float hudY = screenPxY / Gdx.graphics.getHeight() * GameConfig.WORLD_HEIGHT;
+
+            float alpha = p.getAlpha();
+            float size = 4f + alpha * 6f;
+            batch.setColor(1f, 1f, 0.85f, alpha * 0.85f);
+            batch.draw(context.getAssets().getProceduralAssets().getGlow(),
+                       hudX - size * 0.5f, hudY - size * 0.5f, size, size);
+        }
+        batch.setColor(Color.WHITE);
+    }
+
+    /**
+     * Round-trip demonstration: takes the world-space XZ point produced by
+     * {@link #unprojectCursorOntoTable()} (already an unproject result),
+     * lifts it back into 3D, and uses {@code camera.project(...)} to map it
+     * onto the HUD plane. Renders a small ring marking where the cursor
+     * "lands" on the virtual table surface.
+     */
+    private void drawCursorOnTableMarker(SpriteBatch batch) {
+        if (Float.isNaN(cursorOnTable.x)) return;
+
+        worldToScreen.set(cursorOnTable.x, MatchWorld3D.TABLE_TOP_Y, cursorOnTable.y);
+        camera3D.project(worldToScreen);
+        if (worldToScreen.z < 0f || worldToScreen.z > 1f) return;
+
+        float hudX = worldToScreen.x / Gdx.graphics.getWidth()  * GameConfig.WORLD_WIDTH;
+        float hudY = worldToScreen.y / Gdx.graphics.getHeight() * GameConfig.WORLD_HEIGHT;
+        float size = 28f;
+        batch.setColor(0.45f, 0.95f, 0.85f, 0.55f);
+        batch.draw(context.getAssets().getProceduralAssets().getAimRing(),
+                   hudX - size * 0.5f, hudY - size * 0.5f, size, size);
+        batch.setColor(Color.WHITE);
     }
 
     private void drawHud(SpriteBatch batch) {
@@ -206,7 +351,7 @@ public final class MatchScreen3D extends BaseScreen {
             drawCentered(batch, context.getBodyFont(), world.getStatusText(),
                 GameConfig.WORLD_WIDTH * 0.5f, 134f, HUD_STATUS_COLOR);
             drawCentered(batch, context.getBodyFont(),
-                "Click the ball when it crosses the table. R restarts. ESC goes to menu.",
+                "Click the ball to return. WASD pans the camera, scroll to zoom. R restarts. ESC menu.",
                 GameConfig.WORLD_WIDTH * 0.5f, 102f, HUD_HINT_COLOR);
         }
     }
@@ -238,13 +383,16 @@ public final class MatchScreen3D extends BaseScreen {
 
     private static final class Input3D extends InputAdapter {
         int lastClickX, lastClickY;
+        int lastMouseX, lastMouseY;
         private boolean clickRequested;
         private boolean menuRequested;
         private boolean restartRequested;
+        private float scrollAccumulator;
 
         boolean consumeClick()   { boolean v = clickRequested;   clickRequested   = false; return v; }
         boolean consumeMenu()    { boolean v = menuRequested;    menuRequested    = false; return v; }
         boolean consumeRestart() { boolean v = restartRequested; restartRequested = false; return v; }
+        float   consumeScroll()  { float v = scrollAccumulator;  scrollAccumulator = 0f;   return v; }
 
         @Override
         public boolean keyDown(int keycode) {
@@ -258,6 +406,19 @@ public final class MatchScreen3D extends BaseScreen {
             lastClickX = screenX;
             lastClickY = screenY;
             clickRequested = true;
+            return true;
+        }
+
+        @Override
+        public boolean mouseMoved(int screenX, int screenY) {
+            lastMouseX = screenX;
+            lastMouseY = screenY;
+            return false;
+        }
+
+        @Override
+        public boolean scrolled(float amountX, float amountY) {
+            scrollAccumulator += amountY;
             return true;
         }
     }
