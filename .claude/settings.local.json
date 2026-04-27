@@ -20,7 +20,9 @@
       "Bash(tar -xzf /Users/pedro_mariano/.claude/projects/-Users-pedro-mariano-Documents-7-semestre-DesenvolvimentoJogosSim-versoes-libgdx-PingPongGame/b5139e2a-ad5f-49ca-89eb-f42f3d617ef5/tool-results/webfetch-1777171234483-si8y5c.bin)",
       "Bash(gunzip -c /Users/pedro_mariano/.claude/projects/-Users-pedro-mariano-Documents-7-semestre-DesenvolvimentoJogosSim-versoes-libgdx-PingPongGame/b5139e2a-ad5f-49ca-89eb-f42f3d617ef5/tool-results/webfetch-1777171234483-si8y5c.bin)",
       "Bash(tar -xf payload)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(git merge *)",
+      "Bash(git stash *)"
     ]
   }
 }
