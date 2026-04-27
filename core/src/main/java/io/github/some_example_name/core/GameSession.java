@@ -7,6 +7,7 @@ import io.github.some_example_name.model.ItemCatalog;
 import io.github.some_example_name.model.ItemDefinition;
 import io.github.some_example_name.model.MatchConfig;
 import io.github.some_example_name.model.MatchOutcome;
+import io.github.some_example_name.network.NetPeer;
 
 /** Persists menu-to-match state between screens. */
 public final class GameSession {
@@ -17,6 +18,12 @@ public final class GameSession {
     private ItemDefinition playerItem;
     private ItemDefinition botItem;
     private MatchOutcome lastOutcome = MatchOutcome.NONE;
+
+    // Multiplayer session — null in single-player.
+    private NetPeer netPeer;
+    private boolean isHost;
+    private String localName  = "P1";
+    private String remoteName = "P2";
 
     public void rollNewLoadout() {
         offeredItems.clear();
@@ -55,6 +62,21 @@ public final class GameSession {
 
     public RandomXS128 getRandom() {
         return random;
+    }
+
+    public NetPeer getNetPeer()        { return netPeer; }
+    public boolean isHost()            { return isHost; }
+    public String  getLocalName()      { return localName; }
+    public String  getRemoteName()     { return remoteName; }
+
+    public void setNetPeer(NetPeer peer, boolean host) { this.netPeer = peer; this.isHost = host; }
+    public void setLocalName(String name)              { this.localName = name; }
+    public void setRemoteName(String name)             { this.remoteName = name; }
+
+    public void clearNetPeer() {
+        if (netPeer != null) netPeer.close();
+        netPeer = null;
+        isHost = false;
     }
 
     public MatchConfig buildMatchConfig() {

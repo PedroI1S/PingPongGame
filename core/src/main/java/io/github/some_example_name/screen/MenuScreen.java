@@ -19,7 +19,7 @@ public final class MenuScreen extends BaseScreen {
 
     public MenuScreen(Main game) {
         super(game);
-        this.inputProcessor = new MenuInputProcessor(game::openLoadout);
+        this.inputProcessor = new MenuInputProcessor(game::openLoadout, game::openMultiplayerLobby);
     }
 
     @Override public void show() { Gdx.input.setInputProcessor(inputProcessor); entered = 0f; }
@@ -115,11 +115,11 @@ public final class MenuScreen extends BaseScreen {
         float ctaOffset = UIDraw.slideUp(ctaP);
         drawDangerButton(batch, pixel, body, "ENTER THE DUEL", cx, 130f + ctaOffset);
 
-        // Ghost "settings" button below
+        // Ghost "M = LAN MULTIPLAYER" line below the CTA
         float ghostP = UIDraw.entranceProgress(entered, 0.8f, 0.4f);
         body.setColor(Palette.TEXT_DIM.r, Palette.TEXT_DIM.g, Palette.TEXT_DIM.b, ghostP);
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "> SETTINGS", cx, 96f + UIDraw.slideUp(ghostP), Palette.TEXT_DIM);
+            "> M  LAN MULTIPLAYER", cx, 96f + UIDraw.slideUp(ghostP), Palette.TEXT_DIM);
 
         batch.end();
     }
