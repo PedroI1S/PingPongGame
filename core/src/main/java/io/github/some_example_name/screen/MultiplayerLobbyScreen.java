@@ -26,7 +26,7 @@ import java.util.Enumeration;
  */
 public final class MultiplayerLobbyScreen extends BaseScreen {
 
-    private enum Phase { IDLE, HOSTING_WAIT, CONNECTING, LOBBY, ERROR }
+    private enum Phase { IDLE, AWAITING_IP, HOSTING_WAIT, CONNECTING, LOBBY, ERROR }
 
     private final InputHandler input = new InputHandler();
     private Phase phase = Phase.IDLE;
@@ -40,6 +40,7 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     private boolean localReady, remoteReady;
     private String  remoteName = "?";
     private String  errorText;
+    private String  ipBuffer = "";
 
     public MultiplayerLobbyScreen(Main game) {
         super(game);
@@ -99,6 +100,7 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
 
         switch (phase) {
             case IDLE          -> drawIdle(batch, pixel, body, cx);
+            case AWAITING_IP   -> drawAwaitingIp(batch, pixel, body, cx);
             case HOSTING_WAIT  -> drawHostingWait(batch, pixel, body, cx);
             case CONNECTING    -> drawConnecting(batch, pixel, body, cx);
             case LOBBY         -> drawLobby(batch, pixel, body, cx);
@@ -122,6 +124,27 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
         UIDraw.centered(batch, body, context.getGlyphLayout(),
             "YOUR LOCAL IP: " + (localIpHint == null ? "?" : localIpHint),
             cx, 220f, Palette.TEXT_DIM);
+    }
+
+    private void drawAwaitingIp(SpriteBatch batch, Texture pixel, BitmapFont body, float cx) {
+        UIDraw.centered(batch, body, context.getGlyphLayout(),
+            "ENTER HOST IP   (BACKSPACE TO ERASE, ENTER TO CONFIRM, ESC TO CANCEL)",
+            cx, 540f, Palette.TEXT_DIM);
+
+        // Input box
+        float w = 420f, h = 64f;
+        float x = cx - w * 0.5f, y = 420f;
+        UIDraw.fill(batch, pixel, Palette.SURFACE, x, y, w, h);
+        UIDraw.border(batch, pixel, Palette.BLUE, x, y, w, h, 2f);
+
+        boolean cursorOn = ((int) (clock * 2f)) % 2 == 0;
+        String shown = ipBuffer + (cursorOn ? "_" : " ");
+        body.setColor(Palette.TEXT);
+        body.draw(batch, shown, x + 16f, y + 40f);
+
+        UIDraw.centered(batch, body, context.getGlyphLayout(),
+            "TIP: 127.0.0.1 FOR LOCAL TESTING (TWO INSTANCES ON ONE MACHINE)",
+            cx, 340f, Palette.TEXT_DIM);
     }
 
     private void drawHostingWait(SpriteBatch batch, Texture pixel, BitmapFont body, float cx) {
@@ -208,6 +231,7 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     private String bottomLeftHint() {
         return switch (phase) {
             case IDLE         -> "H = HOST    J = JOIN    ESC = BACK";
+            case AWAITING_IP  -> "TYPE HOST IP    ENTER = CONNECT    ESC = CANCEL";
             case HOSTING_WAIT -> "WAITING FOR CLIENT...";
             case CONNECTING   -> "CONNECTING...";
             case LOBBY        -> "R = TOGGLE READY    " + (isHost ? "ENTER = START    " : "") + "ESC = DISCONNECT";
@@ -234,6 +258,11 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
                 if (key == Input.Keys.H) startHosting();
                 else if (key == Input.Keys.J) startJoining();
             }
+            case AWAITING_IP -> {
+                if (key == Input.Keys.ENTER) confirmIp();
+                else if (key == Input.Keys.BACKSPACE && !ipBuffer.isEmpty())
+                    ipBuffer = ipBuffer.substring(0, ipBuffer.length() - 1);
+            }
             case LOBBY -> {
                 if (key == Input.Keys.R) toggleReady();
                 else if (key == Input.Keys.ENTER && isHost && localReady && remoteReady) startMatch();
@@ -242,6 +271,15 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
                 if (key == Input.Keys.ENTER) phase = Phase.IDLE;
             }
             default -> {}
+        }
+    }
+
+    private void onCharTyped(char ch) {
+        if (phase != Phase.AWAITING_IP) return;
+        // Accept digits, dots, and basic IPv4-y characters; cap length.
+        if (ipBuffer.length() >= 21) return;
+        if ((ch >= '0' && ch <= '9') || ch == '.') {
+            ipBuffer += ch;
         }
     }
 
@@ -269,18 +307,21 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     }
 
     private void startJoining() {
-        // System dialog — easiest IP entry on desktop without a TextField rig.
-        Gdx.input.getTextInput(new Input.TextInputListener() {
-            @Override public void input(String text) {
-                if (text == null || text.trim().isEmpty()) return;
-                remoteAddress = text.trim();
-                isHost = false;
-                phase = Phase.CONNECTING;
-                peer = new NetClient(remoteAddress, Protocol.DEFAULT_PORT, new PeerListener());
-                peer.start();
-            }
-            @Override public void canceled() { /* stay in IDLE */ }
-        }, "JOIN GAME — host IP", remoteAddress, "");
+        // In-screen IP input. We can't use Gdx.input.getTextInput() because
+        // it opens a Swing dialog, which deadlocks on macOS LWJGL3 (AWT and
+        // GLFW both fight for the main thread under -XstartOnFirstThread).
+        ipBuffer = remoteAddress;
+        phase = Phase.AWAITING_IP;
+    }
+
+    private void confirmIp() {
+        String trimmed = ipBuffer.trim();
+        if (trimmed.isEmpty()) return;
+        remoteAddress = trimmed;
+        isHost = false;
+        phase = Phase.CONNECTING;
+        peer = new NetClient(remoteAddress, Protocol.DEFAULT_PORT, new PeerListener());
+        peer.start();
     }
 
     private void toggleReady() {
@@ -345,7 +386,8 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     }
 
     private final class InputHandler extends InputAdapter {
-        @Override public boolean keyDown(int keycode) { onKeyPressed(keycode); return true; }
+        @Override public boolean keyDown(int keycode)   { onKeyPressed(keycode); return true; }
+        @Override public boolean keyTyped(char ch)      { onCharTyped(ch); return true; }
     }
 
     /** Find the first non-loopback IPv4 address — best-effort. */
