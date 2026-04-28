@@ -8,6 +8,7 @@ import io.github.some_example_name.model.ItemDefinition;
 import io.github.some_example_name.model.MatchConfig;
 import io.github.some_example_name.model.MatchOutcome;
 import io.github.some_example_name.network.NetPeer;
+import io.github.some_example_name.network.PeerRouter;
 
 /** Persists menu-to-match state between screens. */
 public final class GameSession {
@@ -20,8 +21,9 @@ public final class GameSession {
     private MatchOutcome lastOutcome = MatchOutcome.NONE;
 
     // Multiplayer session — null in single-player.
-    private NetPeer netPeer;
-    private boolean isHost;
+    private NetPeer    netPeer;
+    private PeerRouter peerRouter;
+    private boolean    isHost;
     private String localName  = "P1";
     private String remoteName = "P2";
 
@@ -64,19 +66,26 @@ public final class GameSession {
         return random;
     }
 
-    public NetPeer getNetPeer()        { return netPeer; }
-    public boolean isHost()            { return isHost; }
-    public String  getLocalName()      { return localName; }
-    public String  getRemoteName()     { return remoteName; }
+    public NetPeer    getNetPeer()    { return netPeer; }
+    public PeerRouter getPeerRouter() { return peerRouter; }
+    public boolean    isHost()        { return isHost; }
+    public String     getLocalName()  { return localName; }
+    public String     getRemoteName() { return remoteName; }
 
-    public void setNetPeer(NetPeer peer, boolean host) { this.netPeer = peer; this.isHost = host; }
-    public void setLocalName(String name)              { this.localName = name; }
-    public void setRemoteName(String name)             { this.remoteName = name; }
+    public void setNetPeer(NetPeer peer, boolean host, PeerRouter router) {
+        this.netPeer    = peer;
+        this.isHost     = host;
+        this.peerRouter = router;
+    }
+    public void setLocalName(String name)  { this.localName  = name; }
+    public void setRemoteName(String name) { this.remoteName = name; }
 
     public void clearNetPeer() {
-        if (netPeer != null) netPeer.close();
-        netPeer = null;
-        isHost = false;
+        if (peerRouter != null) peerRouter.setDelegate(null);
+        if (netPeer    != null) netPeer.close();
+        netPeer    = null;
+        peerRouter = null;
+        isHost     = false;
     }
 
     public MatchConfig buildMatchConfig() {

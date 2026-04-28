@@ -32,6 +32,9 @@ public final class GameConfig {
     public static final float BOT_BASE_RETURN_CHANCE = 0.73f;
     public static final float LOADING_MIN_SHOW_TIME = 0.8f;
 
+    /** Network mode: how long host waits for client hit before scoring a miss. */
+    public static final float NET_CLIENT_MISS_TIMEOUT = 4.5f;
+
     public static final float HUD_PADDING = 40f;
 
     private GameConfig() {

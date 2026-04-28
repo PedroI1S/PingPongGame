@@ -7,6 +7,7 @@ import io.github.some_example_name.screen.LoadoutScreen;
 import io.github.some_example_name.screen.MatchScreen3D;
 import io.github.some_example_name.screen.MenuScreen;
 import io.github.some_example_name.screen.MultiplayerLobbyScreen;
+import io.github.some_example_name.screen.NetMatchScreen;
 
 /**
  * Game bootstrap.
@@ -38,6 +39,10 @@ public class Main extends Game {
 
     public void openMultiplayerLobby() {
         setScreen(new MultiplayerLobbyScreen(this));
+    }
+
+    public void openNetMatch() {
+        setScreen(new NetMatchScreen(this));
     }
 
     public void openMatch() {

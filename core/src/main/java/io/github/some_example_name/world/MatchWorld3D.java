@@ -35,6 +35,8 @@ public final class MatchWorld3D {
 
     public enum Phase { PREPARE_SERVE, INCOMING, OUTGOING, BOT_RESOLVE }
 
+    private boolean networkMode;
+
     private final MatchConfig config;
     private final RandomXS128 random;
     private final DuelistState player;
@@ -206,7 +208,7 @@ public final class MatchWorld3D {
                 tableBounceEvent = true;
                 spawnBounceSparks(ballPos.x, TABLE_TOP_Y, ballPos.z);
                 phase = Phase.BOT_RESOLVE;
-                phaseTimer = GameConfig.BOT_RESPONSE_DELAY;
+                phaseTimer = networkMode ? GameConfig.NET_CLIENT_MISS_TIMEOUT : GameConfig.BOT_RESPONSE_DELAY;
                 statusText = "Clean return. Bot is trying to answer.";
             } else {
                 handlePlayerFault("Out of bounds! Try a more centred shot.");
@@ -241,6 +243,11 @@ public final class MatchWorld3D {
         phaseTimer -= delta;
         if (phaseTimer > 0f) return;
 
+        if (networkMode) {
+            clientMiss();
+            return;
+        }
+
         if (random.nextFloat() <= pendingBotReturnChance) {
             currentApproachDuration = Math.max(
                 config.getMinimumApproachDuration(),
@@ -258,6 +265,56 @@ public final class MatchWorld3D {
             prepareServe(GameConfig.BETWEEN_POINTS_DELAY, "Bot missed. A new serve is coming.");
         }
     }
+
+    // ── network-mode API ─────────────────────────────────────────────────────
+
+    public void setNetworkMode(boolean nm) {
+        networkMode = nm;
+    }
+
+    /**
+     * Called by the host when a HIT message arrives from the client.
+     * Accepted during OUTGOING (after ball crosses net to client's side)
+     * or BOT_RESOLVE (ball settled on client's side).
+     */
+    public boolean acceptClientHit(float vx, float vy, float vz) {
+        if (phase == Phase.OUTGOING) {
+            if (!crossedNet || ballPos.z > 0f) return false;
+        } else if (phase != Phase.BOT_RESOLVE) {
+            return false;
+        }
+        rallyCount++;
+        ballVel.set(vx, vy, vz);
+        crossedNet = false;
+        bouncesOnPlayerSide = 0;
+        phase = Phase.INCOMING;
+        statusText = "Opponent gets it back!";
+        paddleHitEvent = true;
+        return true;
+    }
+
+    /** Client timed out without hitting — score a point for the host. */
+    public void clientMiss() {
+        bot.loseLife();
+        if (bot.getLives() <= 0) {
+            outcome = MatchOutcome.PLAYER_WIN;
+            statusText = "Opponent couldn't keep up.";
+            ballVisible = false;
+            return;
+        }
+        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, "Opponent missed. Serving again.");
+    }
+
+    /**
+     * Whether the client is allowed to hit right now: ball has crossed the
+     * net to their side (OUTGOING) or bounced there and is waiting (BOT_RESOLVE).
+     */
+    public boolean isClientCanHit() {
+        if (phase == Phase.OUTGOING && crossedNet && ballPos.z < 0f) return true;
+        return phase == Phase.BOT_RESOLVE;
+    }
+
+    // ── player hit ───────────────────────────────────────────────────────────
 
     /** Returns true if the click hit the incoming ball and triggered a return. */
     public boolean tryHitBall(Ray pickRay) {
@@ -345,6 +402,7 @@ public final class MatchWorld3D {
     // ── accessors ────────────────────────────────────────────────────────────
 
     public Vector3 getBallPos()                 { return ballPos; }
+    public Vector3 getBallVel()                 { return ballVel; }
     public float   getBallRadius()              { return BALL_RADIUS; }
     public boolean isBallVisible()              { return ballVisible; }
     public int     getPlayerLives()             { return player.getLives(); }

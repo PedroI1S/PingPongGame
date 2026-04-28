@@ -14,6 +14,7 @@ import io.github.some_example_name.config.Palette;
 import io.github.some_example_name.network.NetClient;
 import io.github.some_example_name.network.NetHost;
 import io.github.some_example_name.network.NetPeer;
+import io.github.some_example_name.network.PeerRouter;
 import io.github.some_example_name.network.Protocol;
 
 import java.net.InetAddress;
@@ -32,8 +33,9 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     private Phase phase = Phase.IDLE;
     private float clock;
 
-    private NetPeer peer;
-    private boolean isHost;
+    private NetPeer    peer;
+    private PeerRouter peerRouter;
+    private boolean    isHost;
     private String localIpHint;
     private String remoteAddress = "127.0.0.1";
 
@@ -57,6 +59,7 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
         remoteName = "?";
         errorText = null;
         if (peer != null) { peer.close(); peer = null; }
+        peerRouter = null;
     }
 
     @Override
@@ -293,6 +296,7 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
                     peer.close();
                     peer = null;
                 }
+                peerRouter = null;
                 phase = Phase.IDLE;
                 localReady = remoteReady = false;
             }
@@ -302,7 +306,9 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     private void startHosting() {
         isHost = true;
         phase = Phase.HOSTING_WAIT;
-        peer = new NetHost(Protocol.DEFAULT_PORT, new PeerListener());
+        peerRouter = new PeerRouter();
+        peerRouter.setDelegate(new PeerListener());
+        peer = new NetHost(Protocol.DEFAULT_PORT, peerRouter);
         peer.start();
     }
 
@@ -320,7 +326,9 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
         remoteAddress = trimmed;
         isHost = false;
         phase = Phase.CONNECTING;
-        peer = new NetClient(remoteAddress, Protocol.DEFAULT_PORT, new PeerListener());
+        peerRouter = new PeerRouter();
+        peerRouter.setDelegate(new PeerListener());
+        peer = new NetClient(remoteAddress, Protocol.DEFAULT_PORT, peerRouter);
         peer.start();
     }
 
@@ -330,14 +338,12 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     }
 
     private void startMatch() {
-        if (peer != null) peer.send(Protocol.START);
-        // Phase 1: handshake proves the connection works. The networked
-        // match itself lands in Phase 2 — for now close the socket and
-        // route both peers through the existing single-player flow so we
-        // validate lobby -> match transition end-to-end.
-        if (peer != null) { peer.close(); peer = null; }
+        if (isHost && peer != null) peer.send(Protocol.START);
         context.getSession().setRemoteName(remoteName);
-        game.openLoadout();
+        context.getSession().setNetPeer(peer, isHost, peerRouter);
+        peer = null;       // ownership transferred to GameSession
+        peerRouter = null;
+        game.openNetMatch();
     }
 
     // ── peer listener: every callback runs on the GL thread ─────────────
