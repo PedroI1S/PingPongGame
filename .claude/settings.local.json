@@ -22,7 +22,10 @@
       "Bash(tar -xf payload)",
       "Bash(git checkout *)",
       "Bash(git merge *)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(gh auth *)",
+      "Bash(git push *)",
+      "Bash(gh repo *)"
     ]
   }
 }
