@@ -246,10 +246,13 @@ public final class NetMatchScreen extends BaseScreen implements NetPeer.Listener
     // ── host update ───────────────────────────────────────────────────────────
 
     private void updateHost(float delta) {
-        // Player click → tryHitBall during INCOMING phase.
         if (netInput.consumeClick()) {
-            Ray ray = camera3D.getPickRay(netInput.lastClickX, netInput.lastClickY);
-            world.tryHitBall(ray);
+            if (world.getPhase() == MatchWorld3D.Phase.PREPARE_SERVE) {
+                world.tryPlayerServe(); // click anywhere to serve
+            } else {
+                Ray ray = camera3D.getPickRay(netInput.lastClickX, netInput.lastClickY);
+                world.tryHitBall(ray);  // click ball during INCOMING to return
+            }
         }
 
         world.update(delta);
@@ -517,19 +520,28 @@ public final class NetMatchScreen extends BaseScreen implements NetPeer.Listener
 
         boolean over = isHost ? world.isMatchOver() : clientMatchOver;
         if (!over && !disconnected) {
-            String status = isHost ? world.getStatusText() : deriveClientStatus();
+            String status;
+            if (isHost) {
+                status = world.getPhase() == MatchWorld3D.Phase.PREPARE_SERVE
+                    ? "Click anywhere to serve."
+                    : world.getStatusText();
+            } else {
+                status = deriveClientStatus();
+            }
             drawCentered(batch, context.getBodyFont(), status,
                 GameConfig.WORLD_WIDTH * 0.5f, 134f, Palette.RED);
-            drawCentered(batch, context.getBodyFont(),
-                "Click the ball to return.  WASD pans  |  scroll zooms  |  ESC = menu.",
+            String hint = isHost
+                ? "Click to serve / return.  WASD pans  |  scroll zooms  |  ESC = menu."
+                : "Click the ball to return.  WASD pans  |  scroll zooms  |  ESC = menu.";
+            drawCentered(batch, context.getBodyFont(), hint,
                 GameConfig.WORLD_WIDTH * 0.5f, 102f, Palette.TEXT_DIM);
         }
     }
 
     private String deriveClientStatus() {
-        if (!clientBallVisible) return "Waiting for serve...";
+        if (!clientBallVisible) return "Waiting for opponent to serve...";
         if (clientCanHit)       return "Your turn — click the ball to return!";
-        return "Opponent is hitting — get ready!";
+        return "Ball heading your way — get ready!";
     }
 
     private void drawOutcomeOverlay(SpriteBatch batch) {

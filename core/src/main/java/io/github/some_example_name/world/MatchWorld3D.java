@@ -114,6 +114,8 @@ public final class MatchWorld3D {
     }
 
     private void updatePrepareServe(float delta) {
+        // In network mode the host clicks to serve; no auto-serve.
+        if (networkMode) return;
         phaseTimer -= delta;
         if (phaseTimer > 0f) return;
         botServe();
@@ -341,6 +343,24 @@ public final class MatchWorld3D {
         crossedNet = false;
         phase = Phase.OUTGOING;
         statusText = "Clean return. Ball is travelling back to the bot.";
+        paddleHitEvent = true;
+        return true;
+    }
+
+    /**
+     * Host-side serve in network mode. Launches the ball from the host's end
+     * toward the client (-z), entering OUTGOING so the client gets to return.
+     */
+    public boolean tryPlayerServe() {
+        if (phase != Phase.PREPARE_SERVE || !networkMode) return false;
+        float startX = (random.nextFloat() - 0.5f) * TABLE_HALF_WIDTH * 0.6f;
+        ballPos.set(startX, TABLE_TOP_Y + 1.2f, TABLE_HALF_LENGTH - 0.5f);
+        ballVel.set(0f, 5.0f, -7.5f); // toward client (-z)
+        ballVisible = true;
+        crossedNet = false;
+        bouncesOnPlayerSide = 0;
+        phase = Phase.OUTGOING;
+        statusText = "Serve! Opponent must return.";
         paddleHitEvent = true;
         return true;
     }
