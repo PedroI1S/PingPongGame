@@ -16,6 +16,7 @@ import io.github.some_example_name.network.NetHost;
 import io.github.some_example_name.network.NetPeer;
 import io.github.some_example_name.network.PeerRouter;
 import io.github.some_example_name.network.Protocol;
+import io.github.some_example_name.network.RoomCode;
 
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -42,7 +43,9 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     private boolean localReady, remoteReady;
     private String  remoteName = "?";
     private String  errorText;
-    private String  ipBuffer = "";
+    /** Stores the room-code characters as the player types (max {@link RoomCode#LENGTH}). */
+    private String  codeBuffer = "";
+    private String  localRoomCode = "??????";
 
     public MultiplayerLobbyScreen(Main game) {
         super(game);
@@ -52,12 +55,14 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     public void show() {
         Gdx.input.setInputProcessor(input);
         localIpHint = discoverLocalIp();
+        localRoomCode = RoomCode.encode(localIpHint != null ? localIpHint : "127.0.0.1");
         // Reset state in case we re-enter the screen.
         phase = Phase.IDLE;
         clock = 0f;
         localReady = remoteReady = false;
         remoteName = "?";
         errorText = null;
+        codeBuffer = "";
         if (peer != null) { peer.close(); peer = null; }
         peerRouter = null;
     }
@@ -104,7 +109,7 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
         switch (phase) {
             case IDLE          -> drawIdle(batch, pixel, body, cx);
             case AWAITING_IP   -> drawAwaitingIp(batch, pixel, body, cx);
-            case HOSTING_WAIT  -> drawHostingWait(batch, pixel, body, cx);
+            case HOSTING_WAIT  -> drawHostingWait(batch, pixel, body, title, cx);
             case CONNECTING    -> drawConnecting(batch, pixel, body, cx);
             case LOBBY         -> drawLobby(batch, pixel, body, cx);
             case ERROR         -> drawError(batch, pixel, body, cx);
@@ -125,48 +130,66 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
         drawSquareBtn(batch, pixel, body, "[J] JOIN",  cx +  40f, 380f, Palette.BLUE);
 
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "YOUR LOCAL IP: " + (localIpHint == null ? "?" : localIpHint),
-            cx, 220f, Palette.TEXT_DIM);
+            "YOUR ROOM CODE:",
+            cx, 265f, Palette.TEXT_DIM);
+        UIDraw.centered(batch, body, context.getGlyphLayout(),
+            localRoomCode,
+            cx, 230f, Palette.GREEN);
     }
 
     private void drawAwaitingIp(SpriteBatch batch, Texture pixel, BitmapFont body, float cx) {
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "ENTER HOST IP   (BACKSPACE TO ERASE, ENTER TO CONFIRM, ESC TO CANCEL)",
+            "ENTER ROOM CODE   (6 CHARS — BACKSPACE TO ERASE, ENTER TO JOIN, ESC TO CANCEL)",
             cx, 540f, Palette.TEXT_DIM);
 
-        // Input box
-        float w = 420f, h = 64f;
+        // Input box — sized for 6 characters
+        float w = 320f, h = 64f;
         float x = cx - w * 0.5f, y = 420f;
         UIDraw.fill(batch, pixel, Palette.SURFACE, x, y, w, h);
         UIDraw.border(batch, pixel, Palette.BLUE, x, y, w, h, 2f);
 
         boolean cursorOn = ((int) (clock * 2f)) % 2 == 0;
-        String shown = ipBuffer + (cursorOn ? "_" : " ");
+        // Space out the characters so they read like a code
+        StringBuilder spaced = new StringBuilder();
+        for (int i = 0; i < codeBuffer.length(); i++) {
+            if (i > 0) spaced.append(' ');
+            spaced.append(codeBuffer.charAt(i));
+        }
+        if (cursorOn) { if (spaced.length() > 0) spaced.append(' '); spaced.append('_'); }
         body.setColor(Palette.TEXT);
-        body.draw(batch, shown, x + 16f, y + 40f);
+        body.draw(batch, spaced.toString(), x + 16f, y + 40f);
 
+        // Show local-test code so devs can test with two instances on one machine
+        String localCode = RoomCode.encode("127.0.0.1");
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "TIP: 127.0.0.1 FOR LOCAL TESTING (TWO INSTANCES ON ONE MACHINE)",
+            "LOCAL TESTING CODE: " + localCode,
             cx, 340f, Palette.TEXT_DIM);
     }
 
-    private void drawHostingWait(SpriteBatch batch, Texture pixel, BitmapFont body, float cx) {
+    private void drawHostingWait(SpriteBatch batch, Texture pixel, BitmapFont body, BitmapFont title, float cx) {
         boolean blink = ((int) (clock * 1.6f)) % 2 == 0;
         UIDraw.centered(batch, body, context.getGlyphLayout(),
             "WAITING FOR OPPONENT" + (blink ? " ..." : "    "),
-            cx, 480f, Palette.RED);
+            cx, 510f, Palette.RED);
+
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "TELL THEM TO JOIN:  " + (localIpHint == null ? "?" : localIpHint)
-                + "   PORT  " + Protocol.DEFAULT_PORT,
-            cx, 420f, Palette.TEXT);
+            "SHARE YOUR ROOM CODE:",
+            cx, 460f, Palette.TEXT_DIM);
+
+        // Display the room code large and prominent
+        title.getData().setScale(3.2f);
+        UIDraw.centered(batch, title, context.getGlyphLayout(),
+            localRoomCode, cx, 400f, Palette.GREEN);
+        title.getData().setScale(2.2f); // restore scale set in render()
+
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "ESC TO CANCEL", cx, 320f, Palette.TEXT_DIM);
+            "ESC TO CANCEL", cx, 310f, Palette.TEXT_DIM);
     }
 
     private void drawConnecting(SpriteBatch batch, Texture pixel, BitmapFont body, float cx) {
         boolean blink = ((int) (clock * 1.6f)) % 2 == 0;
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "CONNECTING TO " + remoteAddress + (blink ? " ..." : "    "),
+            "CONNECTING" + (blink ? " ..." : "    "),
             cx, 480f, Palette.BLUE);
         UIDraw.centered(batch, body, context.getGlyphLayout(),
             "ESC TO CANCEL", cx, 320f, Palette.TEXT_DIM);
@@ -263,8 +286,8 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
             }
             case AWAITING_IP -> {
                 if (key == Input.Keys.ENTER) confirmIp();
-                else if (key == Input.Keys.BACKSPACE && !ipBuffer.isEmpty())
-                    ipBuffer = ipBuffer.substring(0, ipBuffer.length() - 1);
+                else if (key == Input.Keys.BACKSPACE && !codeBuffer.isEmpty())
+                    codeBuffer = codeBuffer.substring(0, codeBuffer.length() - 1);
             }
             case LOBBY -> {
                 if (key == Input.Keys.R) toggleReady();
@@ -279,10 +302,9 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
 
     private void onCharTyped(char ch) {
         if (phase != Phase.AWAITING_IP) return;
-        // Accept digits, dots, and basic IPv4-y characters; cap length.
-        if (ipBuffer.length() >= 21) return;
-        if ((ch >= '0' && ch <= '9') || ch == '.') {
-            ipBuffer += ch;
+        if (codeBuffer.length() >= RoomCode.LENGTH) return;
+        if (RoomCode.isValidChar(ch)) {
+            codeBuffer += Character.toUpperCase(ch);
         }
     }
 
@@ -313,17 +335,19 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     }
 
     private void startJoining() {
-        // In-screen IP input. We can't use Gdx.input.getTextInput() because
-        // it opens a Swing dialog, which deadlocks on macOS LWJGL3 (AWT and
-        // GLFW both fight for the main thread under -XstartOnFirstThread).
-        ipBuffer = remoteAddress;
+        codeBuffer = "";   // fresh entry every time
         phase = Phase.AWAITING_IP;
     }
 
     private void confirmIp() {
-        String trimmed = ipBuffer.trim();
-        if (trimmed.isEmpty()) return;
-        remoteAddress = trimmed;
+        if (codeBuffer.length() != RoomCode.LENGTH) return;
+        String ip = RoomCode.decode(codeBuffer);
+        if (ip == null) {
+            errorText = "invalid room code";
+            phase = Phase.ERROR;
+            return;
+        }
+        remoteAddress = ip;
         isHost = false;
         phase = Phase.CONNECTING;
         peerRouter = new PeerRouter();
