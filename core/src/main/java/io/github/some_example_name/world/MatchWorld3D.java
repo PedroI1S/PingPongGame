@@ -355,7 +355,7 @@ public final class MatchWorld3D {
         if (phase != Phase.PREPARE_SERVE || !networkMode) return false;
         float startX = (random.nextFloat() - 0.5f) * TABLE_HALF_WIDTH * 0.6f;
         ballPos.set(startX, TABLE_TOP_Y + 1.2f, TABLE_HALF_LENGTH - 0.5f);
-        ballVel.set(0f, 5.0f, -7.5f); // toward client (-z)
+        ballVel.set(0f, 5.0f, -10f); // toward client (-z); lands ~z=-5.4 (deep serve)
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;

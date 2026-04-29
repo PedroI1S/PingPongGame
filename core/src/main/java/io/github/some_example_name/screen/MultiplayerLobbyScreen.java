@@ -139,7 +139,7 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
 
     private void drawAwaitingIp(SpriteBatch batch, Texture pixel, BitmapFont body, float cx) {
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "ENTER ROOM CODE   (6 CHARS — BACKSPACE TO ERASE, ENTER TO JOIN, ESC TO CANCEL)",
+            "ENTER ROOM CODE   (7 CHARS — BACKSPACE TO ERASE, ENTER TO JOIN, ESC TO CANCEL)",
             cx, 540f, Palette.TEXT_DIM);
 
         // Input box — sized for 6 characters
