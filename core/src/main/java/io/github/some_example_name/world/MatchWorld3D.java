@@ -275,6 +275,51 @@ public final class MatchWorld3D {
     }
 
     /**
+     * P1 (player) hits the ball during {@link Phase#INCOMING}.
+     * Accepted only when the ball has already crossed the net to P1's side (z&nbsp;&gt;&nbsp;0).
+     *
+     * <p>Symmetric counterpart of {@link #acceptClientHit} for P2.</p>
+     *
+     * @return {@code true} if the hit was valid and applied
+     */
+    public boolean playerHit(float vx, float vy, float vz) {
+        if (phase != Phase.INCOMING) return false;
+        if (!crossedNet || ballPos.z <= 0f) return false;
+        rallyCount++;
+        pendingBotReturnChance = computeBotReturnChance();
+        ballVel.set(vx, vy, vz);
+        crossedNet = false;
+        bouncesOnPlayerSide = 0;
+        phase = Phase.OUTGOING;
+        statusText = "P1 returns! Ball heading to P2.";
+        paddleHitEvent = true;
+        return true;
+    }
+
+    /**
+     * Whether P1 may currently hit the ball:
+     * ball is in {@link Phase#INCOMING}, has crossed the net, and is on P1's side (z&nbsp;&gt;&nbsp;0).
+     */
+    public boolean isPlayerCanHit() {
+        return phase == Phase.INCOMING && crossedNet && ballPos.z > 0f;
+    }
+
+    /**
+     * Returns which player is the "active" one right now.
+     * <ul>
+     *   <li>1 — P1 should act (serve or return)</li>
+     *   <li>2 — P2 should act (return)</li>
+     *   <li>0 — ball in transit, nobody acts</li>
+     * </ul>
+     */
+    public int getActivePlayer() {
+        if (phase == Phase.PREPARE_SERVE)  return 1;
+        if (isPlayerCanHit())              return 1;
+        if (isClientCanHit())              return 2;
+        return 0;
+    }
+
+    /**
      * Called by the host when a HIT message arrives from the client.
      * Accepted during OUTGOING (after ball crosses net to client's side)
      * or BOT_RESOLVE (ball settled on client's side).
