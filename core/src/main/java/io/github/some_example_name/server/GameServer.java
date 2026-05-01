@@ -195,8 +195,11 @@ public final class GameServer {
         @Override
         public void onServe() {
             MatchWorld3D w = world;
-            if (w != null && playerNumber == 1) {
+            if (w == null) return;
+            if (playerNumber == 1) {
                 actions.offer(w::tryPlayerServe);
+            } else {
+                actions.offer(w::tryClientServe);
             }
         }
 

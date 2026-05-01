@@ -96,11 +96,8 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     private Model             tableModel, netModel, ballModel, floorModel;
     private ModelInstance     tableInstance, netInstance, ballInstance, floorInstance;
 
-    // ── Camera control ────────────────────────────────────────────────────────
+    // ── Fixed camera ──────────────────────────────────────────────────────────
 
-    private static final float CAM_SPEED    = 6f;
-    private static final float CAM_MIN_DIST = 6f;
-    private static final float CAM_MAX_DIST = 18f;
     private final Vector3 cameraTarget = new Vector3();
     private final Vector3 cameraOffset = new Vector3();
 
@@ -241,7 +238,6 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     public void render(float delta) {
         if (netInput.consumeMenu()) { returnToMenu(); return; }
 
-        updateCameraControl(delta);
         updateSimulation(delta);
         unprojectCursorOntoTable();
 
@@ -302,17 +298,15 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     private void handleClick() {
         if (activePlayer != playerNumber) return; // not my turn
 
-        // P1 can serve when ball is invisible (PREPARE_SERVE phase).
-        if (!ballVisible && playerNumber == 1) {
+        // Either player can serve when it's their turn and ball is hidden.
+        if (!ballVisible) {
             if (conn != null) conn.sendServe();
             return;
         }
 
-        // Any player can hit when it's their turn and ball is visible.
-        if (ballVisible) {
-            Ray ray = camera3D.getPickRay(netInput.lastClickX, netInput.lastClickY);
-            tryHit(ray);
-        }
+        // Otherwise, hit the in-flight ball.
+        Ray ray = camera3D.getPickRay(netInput.lastClickX, netInput.lastClickY);
+        tryHit(ray);
     }
 
     private void tryHit(Ray ray) {
@@ -419,28 +413,6 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         camera3D.update();
     }
 
-    private void updateCameraControl(float delta) {
-        float dx = 0f, dz = 0f;
-        if (Gdx.input.isKeyPressed(Input.Keys.A)) dx -= 1f;
-        if (Gdx.input.isKeyPressed(Input.Keys.D)) dx += 1f;
-        if (Gdx.input.isKeyPressed(Input.Keys.W)) dz -= 1f;
-        if (Gdx.input.isKeyPressed(Input.Keys.S)) dz += 1f;
-        if (dx != 0f || dz != 0f) {
-            float len = (float) Math.sqrt(dx * dx + dz * dz);
-            cameraTarget.x += (dx / len) * CAM_SPEED * delta;
-            cameraTarget.z += (dz / len) * CAM_SPEED * delta;
-            cameraTarget.x = MathUtils.clamp(cameraTarget.x, -8f, 8f);
-            cameraTarget.z = MathUtils.clamp(cameraTarget.z, -10f, 14f);
-        }
-        float scroll = netInput.consumeScroll();
-        if (scroll != 0f) {
-            float cur = cameraOffset.len();
-            float nxt = MathUtils.clamp(cur + scroll * 1.2f, CAM_MIN_DIST, CAM_MAX_DIST);
-            cameraOffset.scl(nxt / cur);
-        }
-        applyCameraTransform();
-    }
-
     private void unprojectCursorOntoTable() {
         screenToWorld.set(netInput.lastMouseX, netInput.lastMouseY, 0f);
         camera3D.unproject(screenToWorld);
@@ -502,7 +474,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             drawCentered(batch, context.getBodyFont(), deriveStatus(),
                 GameConfig.WORLD_WIDTH * 0.5f, 134f, Palette.RED);
             drawCentered(batch, context.getBodyFont(),
-                "Click to serve / return.  WASD pans  |  scroll zooms  |  ESC = menu.",
+                "Click to serve / return.  ESC = menu.",
                 GameConfig.WORLD_WIDTH * 0.5f, 102f, Palette.TEXT_DIM);
         }
     }
@@ -510,9 +482,8 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     private String deriveStatus() {
         if (waitingForOpponent) return "Waiting for opponent to connect...";
         if (!ballVisible) {
-            if (activePlayer == playerNumber && playerNumber == 1)
-                return "Click anywhere to serve.";
-            return "Waiting for P1 to serve...";
+            if (activePlayer == playerNumber) return "Click anywhere to serve.";
+            return "Waiting for opponent to serve...";
         }
         if (activePlayer == playerNumber) return "Your turn — click the ball to return!";
         return "Ball heading your way — get ready!";
@@ -555,11 +526,9 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     private static final class NetInput extends InputAdapter {
         int lastClickX, lastClickY, lastMouseX, lastMouseY;
         private boolean clickReq, menuReq;
-        private float   scrollAcc;
 
         boolean consumeClick()  { boolean v = clickReq;  clickReq  = false; return v; }
         boolean consumeMenu()   { boolean v = menuReq;   menuReq   = false; return v; }
-        float   consumeScroll() { float   v = scrollAcc; scrollAcc = 0f;    return v; }
 
         @Override public boolean keyDown(int k) {
             if (k == Input.Keys.ESCAPE) { menuReq = true; return true; }
@@ -570,9 +539,6 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         }
         @Override public boolean mouseMoved(int sx, int sy) {
             lastMouseX = sx; lastMouseY = sy; return false;
-        }
-        @Override public boolean scrolled(float ax, float ay) {
-            scrollAcc += ay; return true;
         }
     }
 }

@@ -18,7 +18,6 @@ import com.badlogic.gdx.graphics.g3d.ModelInstance;
 import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
-import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.Ray;
@@ -26,11 +25,16 @@ import com.badlogic.gdx.utils.ScreenUtils;
 import io.github.some_example_name.Main;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.config.Palette;
-import io.github.some_example_name.model.ItemDefinition;
 import io.github.some_example_name.model.MatchOutcome;
 import io.github.some_example_name.world.ImpactParticle3D;
 import io.github.some_example_name.world.MatchWorld3D;
 
+/**
+ * Single-player match screen — local {@link MatchWorld3D} with bot AI.
+ *
+ * <p>Camera is fixed (no panning, no zoom).  Click the ball to return.
+ * ESC returns to the menu.</p>
+ */
 public final class MatchScreen3D extends BaseScreen {
     private static final Color HUD_TEXT_COLOR   = Palette.TEXT;
     private static final Color HUD_STATS_COLOR  = Palette.TEXT_DIM;
@@ -60,12 +64,9 @@ public final class MatchScreen3D extends BaseScreen {
     private Sound tableHitSfx;
     private Music backgroundMusic;
 
-    // ── camera control state ────────────────────────────────────────────────
-    private static final float CAMERA_TRANSLATE_SPEED = 6f;        // units per second
-    private static final float CAMERA_MIN_DISTANCE    = 6f;
-    private static final float CAMERA_MAX_DISTANCE    = 18f;
-    private final Vector3 cameraTarget = new Vector3(0f, MatchWorld3D.TABLE_TOP_Y, 0f);
-    private final Vector3 cameraOffset = new Vector3(0f, 2.5f, 11f);
+    // ── Fixed camera ──────────────────────────────────────────────────────────
+    private static final Vector3 CAMERA_TARGET = new Vector3(0f, MatchWorld3D.TABLE_TOP_Y, 0f);
+    private static final Vector3 CAMERA_OFFSET = new Vector3(0f, 2.5f, 11f);
 
     // ── reusable buffers for project()/unproject() ──────────────────────────
     private final Vector3 worldToScreen = new Vector3();
@@ -84,8 +85,6 @@ public final class MatchScreen3D extends BaseScreen {
         camera3D = new PerspectiveCamera(60f, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         camera3D.near = 0.1f;
         camera3D.far  = 100f;
-        cameraTarget.set(0f, MatchWorld3D.TABLE_TOP_Y, 0f);
-        cameraOffset.set(0f, 2.5f, 11f);
         applyCameraTransform();
 
         modelBatch = new ModelBatch();
@@ -166,19 +165,20 @@ public final class MatchScreen3D extends BaseScreen {
 
     @Override
     public void render(float delta) {
-        if (input.consumeMenu())    { game.openMenu();  return; }
-        if (input.consumeRestart()) { game.openMatch(); return; }
-
-        updateCameraControl(delta);
+        if (input.consumeMenu()) { game.openMenu(); return; }
 
         if (input.consumeClick()) {
-            Ray ray = camera3D.getPickRay(input.lastClickX, input.lastClickY);
-            world.tryHitBall(ray);
+            // PREPARE_SERVE + active player == 1 → click anywhere to serve.
+            // Otherwise click the ball during INCOMING to return it.
+            if (world.getPhase() == MatchWorld3D.Phase.PREPARE_SERVE
+                && world.getActivePlayer() == 1) {
+                world.tryPlayerServe();
+            } else {
+                Ray ray = camera3D.getPickRay(input.lastClickX, input.lastClickY);
+                world.tryHitBall(ray);
+            }
         }
 
-        // Use unproject to project the cursor onto the table plane (y = TABLE_TOP_Y).
-        // The result is a 2D world-space coordinate stored in cursorOnTable —
-        // used to draw a debug aim crosshair on the table surface in the HUD.
         unprojectCursorOntoTable();
 
         world.update(delta);
@@ -221,46 +221,18 @@ public final class MatchScreen3D extends BaseScreen {
         batch.end();
     }
 
-    /** Recomputes camera.position = target + offset and refreshes the matrices. */
+    /** Fixed third-person view from behind the player. */
     private void applyCameraTransform() {
-        camera3D.position.set(cameraTarget).add(cameraOffset);
-        camera3D.lookAt(cameraTarget);
+        camera3D.position.set(CAMERA_TARGET).add(CAMERA_OFFSET);
+        camera3D.lookAt(CAMERA_TARGET);
         camera3D.up.set(0f, 1f, 0f);
         camera3D.update();
     }
 
-    /** WASD translates the look target on XZ; mouse wheel zooms by scaling cameraOffset. */
-    private void updateCameraControl(float delta) {
-        float dx = 0f, dz = 0f;
-        if (Gdx.input.isKeyPressed(Input.Keys.A)) dx -= 1f;
-        if (Gdx.input.isKeyPressed(Input.Keys.D)) dx += 1f;
-        if (Gdx.input.isKeyPressed(Input.Keys.W)) dz -= 1f;
-        if (Gdx.input.isKeyPressed(Input.Keys.S)) dz += 1f;
-
-        if (dx != 0f || dz != 0f) {
-            float len = (float) Math.sqrt(dx * dx + dz * dz);
-            cameraTarget.x += (dx / len) * CAMERA_TRANSLATE_SPEED * delta;
-            cameraTarget.z += (dz / len) * CAMERA_TRANSLATE_SPEED * delta;
-            cameraTarget.x = MathUtils.clamp(cameraTarget.x, -8f, 8f);
-            cameraTarget.z = MathUtils.clamp(cameraTarget.z, -10f, 14f);
-        }
-
-        float scroll = input.consumeScroll();
-        if (scroll != 0f) {
-            float currentDist = cameraOffset.len();
-            float newDist = MathUtils.clamp(currentDist + scroll * 1.2f,
-                                            CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
-            cameraOffset.scl(newDist / currentDist);
-        }
-
-        applyCameraTransform();
-    }
-
     /**
-     * Demonstrates {@code camera.unproject(...)}: takes the current cursor in
-     * screen pixels, builds a world-space ray, and intersects it analytically
-     * with the table-top plane (y = TABLE_TOP_Y). The XZ result lands in
-     * {@link #cursorOnTable} for the HUD draw.
+     * Demonstrates {@code camera.unproject(...)}: takes the cursor in screen
+     * pixels, builds a world-space ray, and intersects it analytically with
+     * the table-top plane (y = TABLE_TOP_Y).
      */
     private void unprojectCursorOntoTable() {
         screenToWorld.set(input.lastMouseX, input.lastMouseY, 0f);
@@ -276,22 +248,14 @@ public final class MatchScreen3D extends BaseScreen {
         cursorOnTable.set(origin.x + dirX * t, origin.z + dirZ * t);
     }
 
-    /**
-     * Draws each {@link ImpactParticle3D} as a small 2D dot in HUD space —
-     * uses {@code camera.project(...)} to convert the particle's 3D world
-     * position into screen pixels, then maps those pixels back into the
-     * 2D viewport's world coordinates so the SpriteBatch draws them correctly.
-     */
     private void drawParticles(SpriteBatch batch) {
         for (ImpactParticle3D p : world.getParticles()) {
             worldToScreen.set(p.getPosition());
             camera3D.project(worldToScreen);
             if (worldToScreen.z < 0f || worldToScreen.z > 1f) continue;
 
-            float screenPxX = worldToScreen.x;
-            float screenPxY = worldToScreen.y;
-            float hudX = screenPxX / Gdx.graphics.getWidth() * GameConfig.WORLD_WIDTH;
-            float hudY = screenPxY / Gdx.graphics.getHeight() * GameConfig.WORLD_HEIGHT;
+            float hudX = worldToScreen.x / Gdx.graphics.getWidth() * GameConfig.WORLD_WIDTH;
+            float hudY = worldToScreen.y / Gdx.graphics.getHeight() * GameConfig.WORLD_HEIGHT;
 
             float alpha = p.getAlpha();
             float size = 4f + alpha * 6f;
@@ -302,13 +266,6 @@ public final class MatchScreen3D extends BaseScreen {
         batch.setColor(Color.WHITE);
     }
 
-    /**
-     * Round-trip demonstration: takes the world-space XZ point produced by
-     * {@link #unprojectCursorOntoTable()} (already an unproject result),
-     * lifts it back into 3D, and uses {@code camera.project(...)} to map it
-     * onto the HUD plane. Renders a small ring marking where the cursor
-     * "lands" on the virtual table surface.
-     */
     private void drawCursorOnTableMarker(SpriteBatch batch) {
         if (Float.isNaN(cursorOnTable.x)) return;
 
@@ -326,33 +283,18 @@ public final class MatchScreen3D extends BaseScreen {
     }
 
     private void drawHud(SpriteBatch batch) {
-        ItemDefinition playerItem = context.getSession().getPlayerItem();
-        ItemDefinition botItem    = context.getSession().getBotItem();
-
         context.getBodyFont().setColor(HUD_TEXT_COLOR);
         context.getBodyFont().draw(batch, "YOU  " + world.getPlayerLives(), GameConfig.HUD_PADDING, 680f);
         context.getBodyFont().draw(batch, "BOT  " + world.getBotLives(),    1120f, 680f);
 
-        if (playerItem != null) {
-            context.getBodyFont().setColor(playerItem.getAccent());
-            context.getBodyFont().draw(batch, "Item: " + playerItem.getName(), GameConfig.HUD_PADDING, 646f);
-        }
-        if (botItem != null) {
-            context.getBodyFont().setColor(botItem.getAccent());
-            context.getBodyFont().draw(batch, "Bot item: " + botItem.getName(), 1000f, 646f);
-        }
-
         context.getBodyFont().setColor(HUD_STATS_COLOR);
-        context.getBodyFont().draw(batch,
-            String.format("Read window: %.2fs", world.getDisplayedReadWindow()),
-            500f, 680f);
         context.getBodyFont().draw(batch, "Rally: " + world.getRallyCount(), 600f, 646f);
 
         if (!world.isMatchOver()) {
             drawCentered(batch, context.getBodyFont(), world.getStatusText(),
                 GameConfig.WORLD_WIDTH * 0.5f, 134f, HUD_STATUS_COLOR);
             drawCentered(batch, context.getBodyFont(),
-                "Click the ball to return. WASD pans the camera, scroll to zoom. R restarts. ESC menu.",
+                "Click the ball to return.  ESC = menu.",
                 GameConfig.WORLD_WIDTH * 0.5f, 102f, HUD_HINT_COLOR);
         }
     }
@@ -361,15 +303,15 @@ public final class MatchScreen3D extends BaseScreen {
         MatchOutcome outcome = world.getOutcome();
         String title    = outcome == MatchOutcome.PLAYER_WIN ? "Duel won" : "Bot wins this round";
         String subtitle = outcome == MatchOutcome.PLAYER_WIN
-            ? "3D physics return loop is alive. Click → arc → land in."
-            : "The shot got through. Try again with a tighter centre click.";
+            ? "3D physics return loop is alive."
+            : "The shot got through.";
 
         drawCentered(batch, context.getTitleFont(), title,
             GameConfig.WORLD_WIDTH * 0.5f, 420f, OUTCOME_TITLE);
         drawCentered(batch, context.getBodyFont(), subtitle,
             GameConfig.WORLD_WIDTH * 0.5f, 372f, OUTCOME_SUBTITLE);
         drawCentered(batch, context.getBodyFont(),
-            "Press R to replay this setup or ESC to go back to the menu.",
+            "Press ESC to return to the menu.",
             GameConfig.WORLD_WIDTH * 0.5f, 330f, HUD_STATUS_COLOR);
     }
 
@@ -387,18 +329,13 @@ public final class MatchScreen3D extends BaseScreen {
         int lastMouseX, lastMouseY;
         private boolean clickRequested;
         private boolean menuRequested;
-        private boolean restartRequested;
-        private float scrollAccumulator;
 
-        boolean consumeClick()   { boolean v = clickRequested;   clickRequested   = false; return v; }
-        boolean consumeMenu()    { boolean v = menuRequested;    menuRequested    = false; return v; }
-        boolean consumeRestart() { boolean v = restartRequested; restartRequested = false; return v; }
-        float   consumeScroll()  { float v = scrollAccumulator;  scrollAccumulator = 0f;   return v; }
+        boolean consumeClick()   { boolean v = clickRequested;   clickRequested = false; return v; }
+        boolean consumeMenu()    { boolean v = menuRequested;    menuRequested  = false; return v; }
 
         @Override
         public boolean keyDown(int keycode) {
             if (keycode == Input.Keys.ESCAPE) { menuRequested = true; return true; }
-            if (keycode == Input.Keys.R)      { restartRequested = true; return true; }
             return false;
         }
 
@@ -415,12 +352,6 @@ public final class MatchScreen3D extends BaseScreen {
             lastMouseX = screenX;
             lastMouseY = screenY;
             return false;
-        }
-
-        @Override
-        public boolean scrolled(float amountX, float amountY) {
-            scrollAccumulator += amountY;
-            return true;
         }
     }
 }

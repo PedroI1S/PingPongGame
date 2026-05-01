@@ -19,7 +19,7 @@ public final class MenuScreen extends BaseScreen {
 
     public MenuScreen(Main game) {
         super(game);
-        this.inputProcessor = new MenuInputProcessor(game::openLoadout, game::openMultiplayerLobby);
+        this.inputProcessor = new MenuInputProcessor(game::openMatch, game::openMultiplayerLobby);
     }
 
     @Override public void show() { Gdx.input.setInputProcessor(inputProcessor); entered = 0f; }
@@ -97,11 +97,11 @@ public final class MenuScreen extends BaseScreen {
         UIDraw.redLeftPanel(batch, pixel, panelX, panelY, panelW, panelH);
 
         String[] logLines = {
-            "> SCREEN FLOW   : loading -> menu -> loadout -> match",
-            "> INPUT SYSTEM  : mouse aim, click to return, R, ESC",
+            "> SCREEN FLOW   : loading -> menu -> match",
+            "> INPUT SYSTEM  : mouse aim, click to return, ESC menu",
             "> DUEL ENGINE   : incoming ball, react, bot answers",
             "> LIVES         : [#][#][#][#][#]   default 5 per side",
-            "> MODIFIERS     : 1 item per side, bot pick stays hidden",
+            "> SCORING       : whoever scores serves the next point",
         };
         for (int i = 0; i < logLines.length; i++) {
             float lineP_ = UIDraw.entranceProgress(entered, 0.4f + i * 0.06f, 0.4f);

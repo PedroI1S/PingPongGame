@@ -56,7 +56,7 @@ public final class MatchWorld3D {
 
     private Phase phase = Phase.PREPARE_SERVE;
     private MatchOutcome outcome = MatchOutcome.NONE;
-    private String statusText = "Bot is preparing the opening shot.";
+    private String statusText = "P1 to serve.";
     private float phaseTimer;
     private float pendingBotReturnChance;
     private float lastClickAccuracy;
@@ -64,6 +64,13 @@ public final class MatchWorld3D {
     private boolean ballVisible;
     private boolean crossedNet;
     private int bouncesOnPlayerSide;
+
+    /**
+     * Who serves the next point.  1 = P1 (player), 2 = P2 (bot in single-player,
+     * remote opponent in network mode).  Whoever scores the previous point
+     * serves the next one; P1 serves the very first point.
+     */
+    private int nextServer = 1;
 
     // Audio events — set true on relevant frames, consumed by the screen.
     private boolean paddleHitEvent;
@@ -114,8 +121,11 @@ public final class MatchWorld3D {
     }
 
     private void updatePrepareServe(float delta) {
-        // In network mode the host clicks to serve; no auto-serve.
+        // In network mode both players click to serve — no auto-serve.
         if (networkMode) return;
+        // Single-player: only the bot auto-serves on a timer.  The human
+        // player must click to send their serve via {@link #tryPlayerServe()}.
+        if (nextServer != 2) return;
         phaseTimer -= delta;
         if (phaseTimer > 0f) return;
         botServe();
@@ -264,7 +274,9 @@ public final class MatchWorld3D {
                 ballVisible = false;
                 return;
             }
-            prepareServe(GameConfig.BETWEEN_POINTS_DELAY, "Bot missed. A new serve is coming.");
+            nextServer = 1; // player scored — player serves next
+            prepareServe(GameConfig.BETWEEN_POINTS_DELAY,
+                "Bot missed. Click anywhere to serve.");
         }
     }
 
@@ -313,7 +325,7 @@ public final class MatchWorld3D {
      * </ul>
      */
     public int getActivePlayer() {
-        if (phase == Phase.PREPARE_SERVE)  return 1;
+        if (phase == Phase.PREPARE_SERVE)  return nextServer;
         if (isPlayerCanHit())              return 1;
         if (isClientCanHit())              return 2;
         return 0;
@@ -349,7 +361,8 @@ public final class MatchWorld3D {
             ballVisible = false;
             return;
         }
-        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, "Opponent missed. Serving again.");
+        nextServer = 1; // P1 scored, P1 serves next
+        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, "Opponent missed. P1 serves next.");
     }
 
     /**
@@ -393,19 +406,41 @@ public final class MatchWorld3D {
     }
 
     /**
-     * Host-side serve in network mode. Launches the ball from the host's end
-     * toward the client (-z), entering OUTGOING so the client gets to return.
+     * P1's serve (works in both single-player and network mode).
+     * Launches the ball from the +z end toward P2 (-z), entering OUTGOING so
+     * P2 (client or bot) becomes the active player.
      */
     public boolean tryPlayerServe() {
-        if (phase != Phase.PREPARE_SERVE || !networkMode) return false;
+        if (phase != Phase.PREPARE_SERVE) return false;
+        if (nextServer != 1) return false;
         float startX = (random.nextFloat() - 0.5f) * TABLE_HALF_WIDTH * 0.6f;
         ballPos.set(startX, TABLE_TOP_Y + 1.2f, TABLE_HALF_LENGTH - 0.5f);
-        ballVel.set(0f, 5.0f, -10f); // toward client (-z); lands ~z=-5.4 (deep serve)
+        ballVel.set(0f, 5.0f, -10f); // toward P2 (−z); lands ~z=−5.4 (deep serve)
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
         phase = Phase.OUTGOING;
-        statusText = "Serve! Opponent must return.";
+        statusText = "P1 serves. P2 must return.";
+        paddleHitEvent = true;
+        return true;
+    }
+
+    /**
+     * P2's serve in network mode. Launches the ball from the −z end toward P1 (+z),
+     * entering INCOMING (P1's perspective) so P1 becomes the active player.
+     */
+    public boolean tryClientServe() {
+        if (phase != Phase.PREPARE_SERVE) return false;
+        if (nextServer != 2) return false;
+        if (!networkMode) return false; // single-player: bot auto-serves on a timer
+        float startX = (random.nextFloat() - 0.5f) * TABLE_HALF_WIDTH * 0.6f;
+        ballPos.set(startX, TABLE_TOP_Y + 1.2f, -TABLE_HALF_LENGTH + 0.5f);
+        ballVel.set(0f, 5.0f, 10f); // toward P1 (+z)
+        ballVisible = true;
+        crossedNet = false;
+        bouncesOnPlayerSide = 0;
+        phase = Phase.INCOMING;
+        statusText = "P2 serves. P1 must return.";
         paddleHitEvent = true;
         return true;
     }
@@ -418,7 +453,9 @@ public final class MatchWorld3D {
             ballVisible = false;
             return;
         }
-        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, "You missed the shot. Reset and react to the next one.");
+        nextServer = 2; // P2 (bot) scored — they serve next
+        prepareServe(GameConfig.BETWEEN_POINTS_DELAY,
+            "You missed the shot. Opponent serves next.");
     }
 
     private void handlePlayerFault(String text) {
@@ -429,7 +466,8 @@ public final class MatchWorld3D {
             ballVisible = false;
             return;
         }
-        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, text);
+        nextServer = 2; // P2 (bot) scored
+        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, text + " Opponent serves next.");
     }
 
     private void botMissedShot(String text) {
@@ -440,7 +478,8 @@ public final class MatchWorld3D {
             ballVisible = false;
             return;
         }
-        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, text);
+        nextServer = 1; // P1 scored
+        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, text + " Click anywhere to serve.");
     }
 
     private float computeBotReturnChance() {
