@@ -1,92 +1,145 @@
-Plano técnico para a sua simulação (trajetória com ângulo por clique, mesa em trapézio, eixo Z fake, colisão com rede e validação de quique) já está bem viável com a base atual.
+# Forward plan
 
-Base atual onde vamos encaixar:
-- Geometria da mesa hoje: GameConfig.java
-- Projeção trapezoidal atual: MatchWorld.java
-- Clique do jogador: MatchInputController.java
-- Retorno atual ainda simplificado/aleatório: MatchWorld.java
-- Bola atual sem física Z: IncomingBall.java
+The 3D physics + LAN-multiplayer foundation is in. This doc tracks
+what's queued next, in rough priority order.
 
-**Plano De Simulação**
-1. Definir coordenadas da mesa em um módulo único e fácil de editar.
-2. Mapear o clique relativo ao centro da bola para gerar direção e potência.
-3. Simular trajetória 3D fake por tempo (x, y, z), com gravidade e quique.
-4. Aplicar regras de legalidade da jogada (quique no seu lado, passar da rede, quique no outro lado, fora da mesa).
-5. Gerar uma lista de pontos de trajetória para animação posterior (você anima depois em cima disso).
-6. Decidir o resultado da jogada com base nos eventos da simulação (net, out, legal).
+## 1. In-match item pickups
 
-**Modelo Matemático**
-Mesa em trapézio (profundidade visual):
-$$
-t=\frac{y-y_{far}}{y_{near}-y_{far}},\quad
-w(y)=\operatorname{lerp}(w_{far},w_{near},t),\quad
-x=x_c+u\cdot w(y),\ u\in[-1,1]
-$$
+The pre-match loadout was removed. Items return as on-table pickups
+mid-match.
 
-Trajetória com eixo Z fake:
-$$
-x(t)=x_0+v_xt,\quad
-y(t)=y_0+v_yt,\quad
-z(t)=z_0+v_zt-\frac{1}{2}gt^2
-$$
+### Wire format
 
-Quique:
-$$
-z\le0 \Rightarrow z=0,\quad v_z=-e\cdot v_z
-$$
-com $e$ como coeficiente de restituição.
+A new `ItemSpawn` packet broadcast by the server alongside STATE:
+spawn id, position, type, ttl. A `ItemPickedUp` packet acknowledged by
+the server when a player's click hit-tests the item.
 
-Rede no meio do eixo Y:
-- Usar um único valor principal: $y_{net}=\frac{y_{near}+y_{far}}{2}$
-- Colisão com rede quando a bola cruza $y_{net}$ com altura menor que a altura da rede.
+### Server-side
 
-**Mapeamento Do Clique Para O Golpe**
-Clique relativo ao centro da bola:
-$$
-d_x=\operatorname{clamp}\left(\frac{click_x-ball_x}{r},-1,1\right),\quad
-d_y=\operatorname{clamp}\left(\frac{click_y-ball_y}{r},-1,1\right)
-$$
+- `ItemSpawner` ticks alongside `MatchWorld3D`, picks a random legal
+  spot on the table at random intervals.
+- `ItemPickedUp` is authoritative — first valid client hit wins.
+- Active effects live in `DuelistState` (per-player stack with
+  timeouts).
 
-Interpretação:
-- Centro: trajetória neutra.
-- Mais à esquerda/direita: aumenta componente lateral.
-- Mais em cima: aumenta lift (mais arco).
-- Mais longe do centro: aumenta potência e risco (pode sair da mesa).
+### Client-side
 
-Velocidades iniciais sugeridas:
-$$
-v_x = k_x d_x,\quad
-v_y = v_{forward} + k_p\cdot power,\quad
-v_z = v_{liftBase} + k_y d_y + k_{py}\cdot power
-$$
-com $power=\sqrt{d_x^2+d_y^2}$.
+- Render items as small colored cubes / spheres on the table.
+- Click during INCOMING / OUTGOING already does ray-sphere against the
+  ball — extend to also test against active items.
+- HUD shows the local player's active effects with countdowns.
 
-**Regras De Validação Da Jogada**
-1. Primeiro quique precisa acontecer no seu lado.
-2. Bola precisa cruzar a rede sem bater nela.
-3. Segundo quique precisa acontecer no lado adversário.
-4. Se quicar fora do trapézio da mesa em qualquer etapa: ponto perdido.
-5. Se tocar a rede: ponto perdido.
+### First three items to ship
 
-**Arquitetura Recomendada (sem quebrar seu código atual)**
-1. Novo TableGeometry com:
-- Coordenadas da mesa e rede bem sinalizadas.
-- Funções insideTable(x,y), sideOfNet(y), xBoundsAt(y).
+- **Patch kit** — +1 life on pickup
+- **Slow-mo** — next incoming ball arrives ~30% slower
+- **Wide click** — next return uses a 1.5× hit radius
 
-2. Novo ShotInputMapper:
-- Recebe posição da bola + clique.
-- Retorna parâmetros de golpe (ângulo/potência).
+Once the loop feels good, add fakeout / sabotage items (forces a
+specific shot type from the opponent, etc.).
 
-3. Novo TrajectorySimulator:
-- Roda simulação em passo fixo (ex: 1/240s).
-- Retorna pontos + eventos (bounce, netHit, out, valid).
+## 2. Online multiplayer (Steam)
 
-4. Integração em MatchWorld:
-- Substituir lógica simplificada de retorno em MatchWorld.java por plano de trajetória.
-- Em MatchWorld.java, avançar pela trajetória planejada em vez de interpolação direta.
+LAN-only today because the room code is the host's local IPv4. Going
+to the internet means dealing with NAT and friend discovery. Steamworks
+gives both for free.
 
-**Fases De Implementação**
-1. Fase 1 (somente simulação): construir geometria + simulador + eventos, sem animação.
-2. Fase 2 (integração de gameplay): usar resultado da simulação para ganhar/perder ponto.
-3. Fase 3 (visual): animar a bola seguindo os pontos da trajetória.
-4. Fase 4 (tuning): ajustar constantes de lift/potência/rede até ficar divertido e justo.
+### Sequencing
+
+1. **Steam Direct** ($100 one-time fee, app id assigned by Valve).
+2. **Pick a Steamworks Java binding.** `steamworks4j` (code-disaster)
+   is the well-maintained option. Bundle native libs per platform.
+3. **Init Steam at startup.** `SteamAPI_Init()`; if it fails, fall back
+   to LAN-only mode (or refuse to start in non-dev builds).
+4. **Rewrite `GameConnection`** as a wrapper around
+   `SteamNetworkingSockets`:
+   - Replace `Socket` reader thread with `ReceiveMessagesOnConnection`
+     polling.
+   - Replace `out.write(...)` with `SendMessageToConnection(handle,
+     bytes, k_nSteamNetworkingSend_Reliable)`.
+5. **Rework `MultiplayerLobbyScreen`** for Steam:
+   - HOST → `CreateLobby(k_ELobbyTypePublic, 2)` → wait for
+     `LobbyCreated_t` → start `GameServer` bound to a Steam listen
+     socket.
+   - JOIN → either show a Steam lobby browser (`RequestLobbyList`) or
+     accept friend invites only (simpler).
+   - On `LobbyEnter_t`, connect to the host's SteamID.
+6. **Handle invites.** Register
+   `GameRichPresenceJoinRequested_t`; when a friend invites and the
+   user accepts, Steam launches your game (or signals it if running)
+   with a connect token; parse it and connect.
+
+### What stays the same
+
+`MatchWorld3D`, `GameServer`, the binary protocol, the symmetric
+`NetMatchScreen`. Only the transport layer is swapped.
+
+## 3. Latency / cheating polish
+
+Needed once the game runs over the internet, not before.
+
+### Snapshot interpolation
+
+Today the client extrapolates from the last STATE using gravity. On
+internet (30–150 ms RTT, occasional packet loss / reorder) this looks
+jittery. Buffer ~100 ms of incoming snapshots and render the past —
+smooth and accurate, at the cost of a slight delay.
+
+### Client-side prediction
+
+The local player's hit currently waits for the next STATE to confirm.
+On a 100 ms link that's a noticeable lag. Predict locally, render the
+return immediately, snap back if the server rejects it.
+
+### Server-side validation
+
+Today the server trusts whatever velocity the client sends in HIT. On
+LAN that's fine. Online, a malicious client could send arbitrary
+velocities. Mitigations:
+
+- Clamp `vx`, `vy`, `vz` into a plausible range based on `MatchWorld3D`
+  return constants.
+- Reject HIT if the ball wasn't in the legal click zone for that
+  player at the time the packet arrived (some grace for latency).
+- Optionally have the client send a coarse claimed click position and
+  the server validates the ray-sphere intersection itself.
+
+Not full anti-cheat. Enough to defeat trivial scripting.
+
+### Reconnect / resync
+
+Today, if any packet sequence breaks the match dies. Add a session id
+to every packet. If a client misses too long, the server holds the
+session for ~10 seconds; reconnecting clients resume from the latest
+STATE.
+
+## 4. Bot variety
+
+Currently `MatchWorld3D.computeBotReturnChance()` is a single tuned
+value. Better:
+
+- `ServePattern` declarative recipes (fast straight / slow fakeout /
+  cross / wide).
+- `DifficultyProfile` JSON: reaction window, return chance variance,
+  shot-variety probability. Easy / Normal / Hard load different files.
+- Tells: bot pauses or twitches before fakeout serves so a skilled
+  player can read it.
+
+## 5. Feedback layer
+
+The simulation is tight; the feedback isn't.
+
+- Camera shake on table bounces (cheap, big readability win).
+- Glow trail behind the ball (already have a `glow` procedural texture
+  — just wire up trail particles).
+- Centre-hit vs edge-hit SFX variants.
+- Score flash overlay when a point ends.
+- Court ambience under the existing music track.
+
+## Out of scope (for now)
+
+- Mobile / touch port — viewport math is ready but click-to-return on
+  a small touch screen probably needs a different mechanic.
+- Spectator mode.
+- Replay system.
+- Tournaments / matchmaking ranking.
