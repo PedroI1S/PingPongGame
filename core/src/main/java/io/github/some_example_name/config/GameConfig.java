@@ -2,7 +2,7 @@ package io.github.some_example_name.config;
 
 /** Shared constants for the prototype foundation. */
 public final class GameConfig {
-    public static final String GAME_TITLE = "Aim Roulette Pong";
+    public static final String GAME_TITLE = "Aim Roulette Pong -- Menu";
 
     public static final float WORLD_WIDTH = 1280f;
     public static final float WORLD_HEIGHT = 720f;
@@ -31,6 +31,9 @@ public final class GameConfig {
     public static final float BETWEEN_POINTS_DELAY = 0.95f;
     public static final float BOT_BASE_RETURN_CHANCE = 0.73f;
     public static final float LOADING_MIN_SHOW_TIME = 0.8f;
+
+    /** Network mode: how long host waits for client hit before scoring a miss. */
+    public static final float NET_CLIENT_MISS_TIMEOUT = 4.5f;
 
     public static final float HUD_PADDING = 40f;
 

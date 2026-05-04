@@ -6,11 +6,12 @@ import com.badlogic.gdx.assets.AssetManager;
 import com.badlogic.gdx.assets.loaders.FileHandleResolver;
 import com.badlogic.gdx.assets.loaders.SynchronousAssetLoader;
 import com.badlogic.gdx.files.FileHandle;
-import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.utils.Array;
-import java.util.EnumMap;
 
-/** Loader that plugs generated textures into AssetManager like any other asset bundle. */
+/**
+ * Plugs {@link ProceduralAssets} into {@link AssetManager} like any other bundle.
+ * All textures are generated in-memory — no external image files are needed.
+ */
 public final class ProceduralAssetsLoader
     extends SynchronousAssetLoader<ProceduralAssets, AssetLoaderParameters<ProceduralAssets>> {
 
@@ -25,12 +26,7 @@ public final class ProceduralAssetsLoader
         FileHandle file,
         AssetLoaderParameters<ProceduralAssets> parameter
     ) {
-        Texture ballTexture = assetManager.get(ProceduralAssets.BALL_SPRITE_SHEET, Texture.class);
-        EnumMap<TableVariation, Texture> tableTextures = new EnumMap<>(TableVariation.class);
-        for (TableVariation variation : TableVariation.values()) {
-            tableTextures.put(variation, assetManager.get(variation.getSpriteSheetPath(), Texture.class));
-        }
-        return ProceduralAssets.create(ballTexture, tableTextures);
+        return ProceduralAssets.create();
     }
 
     @Override
@@ -40,11 +36,6 @@ public final class ProceduralAssetsLoader
         FileHandle file,
         AssetLoaderParameters<ProceduralAssets> parameter
     ) {
-        Array<AssetDescriptor> dependencies = new Array<>();
-        dependencies.add(new AssetDescriptor<>(ProceduralAssets.BALL_SPRITE_SHEET, Texture.class));
-        for (TableVariation variation : TableVariation.values()) {
-            dependencies.add(new AssetDescriptor<>(variation.getSpriteSheetPath(), Texture.class));
-        }
-        return dependencies;
+        return new Array<>();  // no external file dependencies
     }
 }

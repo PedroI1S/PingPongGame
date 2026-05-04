@@ -1,49 +1,48 @@
-# Aim Roulette Pong Foundation
+# Aim Roulette Pong
 
-A LibGDX foundation for a 2D first-person-style ping-pong reaction game.
+A 3D first-person ping-pong reaction game built on LibGDX.
 
-The match concept in this version is:
+You stand at one end of the table. Balls come at you. You click to return.
+Single-player puts you against a bot; LAN multiplayer puts you against another
+player over a server-authoritative connection — one of you hosts and the
+other joins with a short room code.
 
-- you are in the player POV
-- the bot sends balls at you
-- each incoming ball grows in size as it gets closer
-- you must click it before impact to return it
-- both sides still use lives and pre-match item modifiers
+## Modes
 
-This is meant to be a clean foundation, not the final game. The focus is on structure, systems, and a playable core loop that matches the idea more closely.
+### Single-player
 
-## Current Flow
+A bot serves and returns. Lose all your lives or knock out the bot's. The
+match runs entirely locally on a single `MatchWorld3D` simulation.
 
-1. Loading screen initializes assets.
-2. Menu screen presents the current prototype loop.
-3. Loadout screen lets the player choose one pre-match modifier.
-4. Match screen runs the player-POV reaction duel.
-5. Result returns to the menu.
+### LAN multiplayer
 
-## Current Controls
+Server-authoritative. When you press **HOST**, the game spins up an embedded
+TCP game server (port 7777) and connects to it as Player 1. The other player
+presses **JOIN**, types your room code, and connects as Player 2. Both clients
+are then pure drawing + input — physics, collision, and scoring run on the
+server, which broadcasts state snapshots at 30 Hz.
 
-- `ENTER` or mouse click: continue from menu
-- `LEFT` / `RIGHT`: choose a loadout card
-- `ENTER`: confirm card
-- `Mouse move`: aim your cursor during the match
-- `Mouse click`: return the incoming ball
-- `R`: restart the current duel setup
-- `ESC`: return to menu
+The room code is the host's local IPv4 address encoded in base-36 (7
+characters). For testing two clients on the same machine, use the code shown
+on the join screen as `LOCAL TEST CODE`, which decodes to `127.0.0.1`.
 
-## Technical Features Included
+## Controls
 
-- class-based architecture with separated packages
-- screen flow with `Game` + multiple screens
-- centralized `GameContext` and `GameSession`
-- visible `AssetManager` loading screen with boot-phase feedback
-- `AssetManager` wrapper plus custom procedural asset loading
-- table animation pipeline with variation-ready sprite-sheet metadata
-- `InputProcessor` usage for menu, loadout, and gameplay
-- object pooling through reusable impact particles
-- a duel model with items, lives, tempo ramp, and bot response logic
-- a table shot workflow: table reverse animation -> frozen contact frame -> incoming ball -> outgoing ball -> table resumes
+- `ENTER` / mouse click — continue from the menu
+- `H` — host a multiplayer match (in the lobby)
+- `J` — join a multiplayer match (in the lobby)
+- `Mouse click` — serve / return the ball
+- `R` — restart the current duel (single-player)
+- `ESC` — back to the previous screen
 
-## How To Run
+## Match rules
+
+- Both sides start with 5 lives.
+- Whoever wins a point serves the next ball.
+- A point ends on miss, into-the-net, double-bounce on your side, or
+  out-of-bounds.
+
+## How to run
 
 ```bash
 ./gradlew lwjgl3:run
@@ -55,46 +54,59 @@ To verify the project builds:
 ./gradlew build
 ```
 
-## Project Structure
+For a quick local LAN test, launch the game twice. On window 1: Multiplayer →
+HOST. On window 2: Multiplayer → JOIN, type the local test code shown on the
+join screen.
 
-- `core/src/main/java/io/github/some_example_name/Main.java`
-  Central game bootstrap and navigation.
-- `core/src/main/java/io/github/some_example_name/core`
-  Shared lifetime objects and cross-screen state.
-- `core/src/main/java/io/github/some_example_name/assets`
-  Asset pipeline, generated placeholder visuals, and variation-ready table sprite-sheet descriptors.
-- `core/src/main/java/io/github/some_example_name/input`
-  Screen-specific input processors.
-- `core/src/main/java/io/github/some_example_name/model`
-  Match configuration, item definitions, and enums.
-- `core/src/main/java/io/github/some_example_name/screen`
-  Loading, menu, loadout, and match screens.
-- `core/src/main/java/io/github/some_example_name/world`
-  Incoming-ball simulation, duel runtime state, and pooled VFX.
-- `assets/ui`
-  UI asset subfolder used by the loading/menu flow.
-- `docs/architecture.md`
-  Technical breakdown of the foundation.
-- `docs/gameplay-roadmap.md`
-  Design translation and next-step ideas.
+## Architecture
 
-## What Changed Compared To The Earlier Side-View Draft
+```
+PingPongGame/
+├── core/             # game logic, screens, networking, embedded server
+└── lwjgl3/           # LWJGL3 desktop launcher
+```
 
-The gameplay foundation is no longer side-view Pong with paddle movement.
+### Module layout
 
-It is now built around the correct interaction:
+- `core/.../Main.java` — game bootstrap, screen navigation
+- `core/.../core/` — `GameContext`, `GameSession`, lifetime objects
+- `core/.../screen/` — Loading, Menu, MatchScreen3D, MultiplayerLobbyScreen, NetMatchScreen
+- `core/.../world/` — `MatchWorld3D` (authoritative physics, bot AI), particle pool
+- `core/.../model/` — `MatchConfig`, `MatchOutcome`, etc.
+- `core/.../network/` — binary `GameConnection`, `PacketType`, `RoomCode`
+- `core/.../server/` — `GameServer` (headless authoritative loop, 60 Hz physics, 30 Hz state broadcast)
+- `core/.../assets/` — procedurally generated UI textures
+- `core/.../input/` — `InputAdapter` subclasses for menus
+- `core/.../config/` — `GameConfig`, `Palette`
 
-- incoming threat on screen
-- increasing visual size to imply depth
-- quick click reaction
-- abstract bot answer after your return
+### Networking
 
-That keeps the project simpler while matching the aim-lab-like direction much better.
+- Two TCP sockets between server and clients. The host's game embeds the
+  server in-process; the joining client connects over the network.
+- Binary protocol via `DataInputStream` / `DataOutputStream`. See
+  `network/PacketType.java` for the wire format.
+- STATE packets carry ball position + velocity + lives + active player; clients
+  dead-reckon between snapshots using gravity.
+- Control packets: `WELCOME`, `WAITING`, `HELLO`, `SERVE`, `HIT`,
+  `GAME_OVER`, `SFX`, `BYE`.
 
-## Recommended Next Expansions
+### Rendering
 
-- add stronger depth cues like shadows, trail lines, and impact shake
-- give the bot visible serve patterns or fakeouts
-- turn passive pre-match cards into active item uses
-- add sound, combo feedback, and score breakdowns
-- add difficulty profiles for bot timing and error rates
+- 3D scene assembled from `ModelBuilder` primitives — no model files. The
+  table, net, ball, and floor are box / sphere geometry with diffuse colors
+  and a single directional light.
+- 2D HUD drawn over the 3D pass: lives, status text, aim ring, and bounce
+  particles projected back onto screen-space.
+- Six procedural textures (pixel, panel, background, glow, aim ring, noise)
+  generated at startup — no PNGs ship with the game.
+
+## Planned
+
+- In-match item pickups (the previous pre-match card system is gone — items
+  will appear during play instead)
+- Difficulty profiles for the bot
+
+## Documentation
+
+- `docs/architecture.md` — deeper technical breakdown
+- `docs/gameplay-roadmap.md` — design notes

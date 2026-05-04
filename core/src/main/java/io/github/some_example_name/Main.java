@@ -3,9 +3,10 @@ package io.github.some_example_name;
 import com.badlogic.gdx.Game;
 import io.github.some_example_name.core.GameContext;
 import io.github.some_example_name.screen.LoadingScreen;
-import io.github.some_example_name.screen.LoadoutScreen;
-import io.github.some_example_name.screen.MatchScreen;
+import io.github.some_example_name.screen.MatchScreen3D;
 import io.github.some_example_name.screen.MenuScreen;
+import io.github.some_example_name.screen.MultiplayerLobbyScreen;
+import io.github.some_example_name.screen.NetMatchScreen;
 
 /**
  * Game bootstrap.
@@ -30,17 +31,17 @@ public class Main extends Game {
         setScreen(new MenuScreen(this));
     }
 
-    public void openLoadout() {
-        context.getSession().rollNewLoadout();
-        setScreen(new LoadoutScreen(this));
+    public void openMultiplayerLobby() {
+        setScreen(new MultiplayerLobbyScreen(this));
     }
 
+    public void openNetMatch() {
+        setScreen(new NetMatchScreen(this));
+    }
+
+    /** Single-player vs the local bot — no pre-match loadout. */
     public void openMatch() {
-        if (context.getSession().getPlayerItem() == null) {
-            openLoadout();
-            return;
-        }
-        setScreen(new MatchScreen(this));
+        setScreen(new MatchScreen3D(this));
     }
 
     @Override
