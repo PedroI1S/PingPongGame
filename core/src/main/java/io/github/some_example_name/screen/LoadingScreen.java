@@ -42,6 +42,10 @@ public final class LoadingScreen extends BaseScreen {
             return;
         }
 
+        // The loading screen renders straight to the back buffer — no
+        // post-process pass.  The boot text is small and the retro shader's
+        // palette quantization makes it unreadable; we want this screen
+        // crisp.  The pixelated look kicks in from the menu onward.
         beginFrame(0f, 0f, 0f);
         SpriteBatch batch = context.getBatch();
         Texture pixel = context.getLoadingPixel();

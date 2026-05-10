@@ -10,6 +10,7 @@ import com.badlogic.gdx.utils.Disposable;
 import com.badlogic.gdx.utils.viewport.FitViewport;
 import io.github.some_example_name.assets.GameAssets;
 import io.github.some_example_name.config.GameConfig;
+import io.github.some_example_name.render.RetroPostProcess;
 
 /** Shared objects that live for the whole application lifetime. */
 public final class GameContext implements Disposable {
@@ -22,6 +23,8 @@ public final class GameContext implements Disposable {
     private final Texture loadingPixel;
     private final GameAssets assets = new GameAssets();
     private final GameSession session = new GameSession();
+    private final GameSettings settings = new GameSettings();
+    private RetroPostProcess postProcess; // lazy — needs GL context
 
     public GameContext() {
         titleFont.getData().setScale(2.2f);
@@ -30,6 +33,7 @@ public final class GameContext implements Disposable {
         pixmap.fill();
         loadingPixel = new Texture(pixmap);
         pixmap.dispose();
+        settings.load();
         viewport.apply(true);
     }
 
@@ -65,12 +69,38 @@ public final class GameContext implements Disposable {
         return session;
     }
 
+    public GameSettings getSettings() {
+        return settings;
+    }
+
+    public void applySettings() {
+        if (postProcess != null) {
+            postProcess.setEnabled(settings.isPostProcessingEnabled());
+            postProcess.setLowResPercent(settings.getRetroResolutionScale(), settings.getRetroResolutionScale());
+        }
+    }
+
+    /**
+     * Lazily-built retro post-process pass.  Each screen wraps its render
+     * in {@code postProcess.begin()} / {@code postProcess.endAndBlit()} to
+     * pick up the Buckshot-Roulette-style palette / dither / vignette look.
+     */
+    public RetroPostProcess getPostProcess() {
+        if (postProcess == null) {
+            postProcess = new RetroPostProcess();
+            applySettings();
+        }
+        return postProcess;
+    }
+
     @Override
     public void dispose() {
+        settings.save();
         batch.dispose();
         bodyFont.dispose();
         titleFont.dispose();
         loadingPixel.dispose();
         assets.dispose();
+        if (postProcess != null) postProcess.dispose();
     }
 }

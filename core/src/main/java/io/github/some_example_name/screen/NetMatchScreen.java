@@ -142,27 +142,39 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         conn         = session.getGameConnection();
         playerNumber = session.getPlayerNumber();
 
-        // Redirect live callbacks to this screen.
+        // Redirect live callbacks to this screen.  Cheap, idempotent.
         if (conn != null) conn.setListener(this);
 
-        // Camera: P1 at +z looking toward −z, P2 at −z looking toward +z.
-        boolean isP1 = (playerNumber == 1);
-        cameraTarget.set(0f, MatchWorld3D.TABLE_TOP_Y, 0f);
-        cameraOffset.set(0f, 2.5f, isP1 ? 11f : -11f);
+        // Heavy init only on first show().  Re-entering from pause / settings
+        // would otherwise nuke camera state, reset the "waiting for opponent"
+        // banner, and double-greet the server.
+        if (camera3D == null) {
+            boolean isP1 = (playerNumber == 1);
+            cameraTarget.set(0f, MatchWorld3D.TABLE_TOP_Y, 0f);
+            cameraOffset.set(0f, 2.5f, isP1 ? 11f : -11f);
 
-        camera3D = new PerspectiveCamera(60f, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
-        camera3D.near = 0.1f;
-        camera3D.far  = 100f;
-        applyCameraTransform();
+            camera3D = new PerspectiveCamera(60f, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+            camera3D.near = 0.1f;
+            camera3D.far  = 100f;
+            applyCameraTransform();
 
-        modelBatch  = new ModelBatch();
-        environment = new Environment();
-        environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.45f, 0.5f, 0.55f, 1f));
-        environment.add(new DirectionalLight().set(0.9f, 0.95f, 1f, -0.4f, -0.8f, -0.3f));
-        buildModels();
+            modelBatch  = new ModelBatch();
+            environment = new Environment();
+            environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.45f, 0.5f, 0.55f, 1f));
+            environment.add(new DirectionalLight().set(0.9f, 0.95f, 1f, -0.4f, -0.8f, -0.3f));
+            buildModels();
 
-        paddleHitSfx    = context.getAssets().getBallHitSfx();
-        tableHitSfx     = context.getAssets().getTableHitSfx();
+            paddleHitSfx = context.getAssets().getBallHitSfx();
+            tableHitSfx  = context.getAssets().getTableHitSfx();
+
+            // Banner state — only set on first entry; subsequent shows keep
+            // whatever STATE packets have already taught us.
+            waitingForOpponent = true;
+
+            // Greet the server only once per match.
+            if (conn != null) conn.sendHello();
+        }
+
         backgroundMusic = context.getAssets().getBackgroundMusic();
         backgroundMusic.setLooping(true);
         backgroundMusic.setVolume(0.25f);
@@ -170,12 +182,6 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
         netInput = new NetInput();
         Gdx.input.setInputProcessor(netInput);
-
-        // If server hasn't sent anything yet, we show "waiting for opponent".
-        waitingForOpponent = true;
-
-        // Greet the server.
-        if (conn != null) conn.sendHello();
     }
 
     private void buildModels() {
@@ -221,6 +227,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             camera3D.viewportHeight = height;
             camera3D.update();
         }
+        context.getPostProcess().resize(width, height);
     }
 
     @Override
@@ -236,10 +243,13 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
     @Override
     public void render(float delta) {
-        if (netInput.consumeMenu()) { returnToMenu(); return; }
+        if (netInput.consumeMenu()) { game.openPauseMenu(this, this::returnToMenu); return; }
 
         updateSimulation(delta);
         unprojectCursorOntoTable();
+
+        // Wrap the whole scene + HUD in the retro post-process pass.
+        context.getPostProcess().begin();
 
         // 3-D pass
         ScreenUtils.clear(0.02f, 0.05f, 0.07f, 1f, true);
@@ -263,6 +273,8 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         if (matchOver)    drawOutcomeOverlay(batch);
         if (disconnected) drawDisconnectOverlay(batch);
         batch.end();
+
+        context.getPostProcess().endAndBlit();
     }
 
     // ── Simulation update ─────────────────────────────────────────────────────
@@ -514,6 +526,10 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         if (conn != null) conn.sendBye();
         shutdownConn();
         game.openMenu();
+    }
+
+    public void exitToMenu() {
+        returnToMenu();
     }
 
     private void shutdownConn() {

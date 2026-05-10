@@ -82,6 +82,7 @@ public final class MatchWorld3D {
         player = new DuelistState(ArenaSide.PLAYER, "You", config.getFighter(ArenaSide.PLAYER));
         bot    = new DuelistState(ArenaSide.BOT,    "Bot", config.getFighter(ArenaSide.BOT));
         currentApproachDuration = config.getInitialApproachDuration();
+        nextServer = 2; // start with bot serving to match opening message
         prepareServe(GameConfig.OPENING_DELAY, "Bot is preparing the opening shot.");
     }
 

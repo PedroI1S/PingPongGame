@@ -79,25 +79,37 @@ public final class MatchScreen3D extends BaseScreen {
 
     @Override
     public void show() {
-        world = new MatchWorld3D(context.getSession().buildMatchConfig(), context.getSession().getRandom());
-        outcomeRecorded = false;
+        // First-time init only: building the world here on every show() would
+        // erase progress every time the user returns from the pause / settings
+        // menus.  The pause-resume flow does Game.setScreen(this) which calls
+        // show() again on the same instance — we want the existing world to
+        // survive that round-trip.
+        if (world == null) {
+            world = new MatchWorld3D(context.getSession().buildMatchConfig(),
+                                     context.getSession().getRandom());
+            outcomeRecorded = false;
 
-        camera3D = new PerspectiveCamera(60f, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
-        camera3D.near = 0.1f;
-        camera3D.far  = 100f;
-        applyCameraTransform();
+            camera3D = new PerspectiveCamera(60f, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+            camera3D.near = 0.1f;
+            camera3D.far  = 100f;
+            applyCameraTransform();
 
-        modelBatch = new ModelBatch();
-        environment = new Environment();
-        environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.45f, 0.5f, 0.55f, 1f));
-        environment.add(new DirectionalLight().set(0.9f, 0.95f, 1f, -0.4f, -0.8f, -0.3f));
+            modelBatch = new ModelBatch();
+            environment = new Environment();
+            environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.45f, 0.5f, 0.55f, 1f));
+            environment.add(new DirectionalLight().set(0.9f, 0.95f, 1f, -0.4f, -0.8f, -0.3f));
 
-        buildModels();
+            buildModels();
+
+            paddleHitSfx = context.getAssets().getBallHitSfx();
+            tableHitSfx  = context.getAssets().getTableHitSfx();
+        }
+
+        // These three things DO need to happen on every show() — hide() drops
+        // the input processor and pauses the music.
         input = new Input3D();
         Gdx.input.setInputProcessor(input);
 
-        paddleHitSfx    = context.getAssets().getBallHitSfx();
-        tableHitSfx     = context.getAssets().getTableHitSfx();
         backgroundMusic = context.getAssets().getBackgroundMusic();
         backgroundMusic.setLooping(true);
         backgroundMusic.setVolume(0.25f);
@@ -161,11 +173,12 @@ public final class MatchScreen3D extends BaseScreen {
             camera3D.viewportHeight = height;
             camera3D.update();
         }
+        context.getPostProcess().resize(width, height);
     }
 
     @Override
     public void render(float delta) {
-        if (input.consumeMenu()) { game.openMenu(); return; }
+        if (input.consumeMenu()) { game.openPauseMenu(this, this::exitToMenu); return; }
 
         if (input.consumeClick()) {
             // PREPARE_SERVE + active player == 1 → click anywhere to serve.
@@ -195,6 +208,9 @@ public final class MatchScreen3D extends BaseScreen {
             ballInstance.transform.setToTranslation(p.x, p.y, p.z);
         }
 
+        // Wrap everything in the retro post-process pass.
+        context.getPostProcess().begin();
+
         ScreenUtils.clear(0.02f, 0.05f, 0.07f, 1f, true);
         Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
 
@@ -219,6 +235,8 @@ public final class MatchScreen3D extends BaseScreen {
             drawOutcomeOverlay(batch);
         }
         batch.end();
+
+        context.getPostProcess().endAndBlit();
     }
 
     /** Fixed third-person view from behind the player. */
@@ -322,6 +340,10 @@ public final class MatchScreen3D extends BaseScreen {
         if (netModel    != null) netModel.dispose();
         if (ballModel   != null) ballModel.dispose();
         if (floorModel  != null) floorModel.dispose();
+    }
+
+    public void exitToMenu() {
+        game.openMenu();
     }
 
     private static final class Input3D extends InputAdapter {
