@@ -197,7 +197,7 @@ public final class MatchWorld3D {
      * at a comfortable click height. Slowed by the player's incoming-time multiplier.
      */
     private void applyBotImpulse() {
-        float speedScale = 1f / Math.max(0.5f, player.getIncomingTimeMultiplier());
+        float speedScale = (1f / Math.max(0.5f, player.getIncomingTimeMultiplier())) * p1Effects.incomingSpeedMultiplier();
         float aim = (random.nextFloat() - 0.5f) * 1.4f;
         ballVel.set(aim, 5.0f, 7.5f * speedScale);
         paddleHitEvent = true;
@@ -454,13 +454,13 @@ public final class MatchWorld3D {
     public boolean tryHitBall(Ray pickRay) {
         if (phase != Phase.INCOMING) return false;
         if (ballPos.z < 0f || ballPos.z > TABLE_HALF_LENGTH + 1.5f) return false;
-        if (!HitVelocity.computeFromRay(pickRay, ballPos, player.getTargetScaleMultiplier(),
+        if (!HitVelocity.computeFromRay(pickRay, ballPos, player.getTargetScaleMultiplier() * p1Effects.hitScaleMultiplier(),
                 player.getReturnPowerMultiplier(), true, ballVel, hitPoint, tmpVel)) {
             return false;
         }
 
         tmpVel.set(hitPoint).sub(ballPos);
-        float hitRadius = BALL_RADIUS * player.getTargetScaleMultiplier() * HitVelocity.CLICK_HIT_PADDING;
+        float hitRadius = BALL_RADIUS * player.getTargetScaleMultiplier() * p1Effects.hitScaleMultiplier() * HitVelocity.CLICK_HIT_PADDING;
         float ndx = MathUtils.clamp(tmpVel.x / hitRadius, -1f, 1f);
         float ndy = MathUtils.clamp(tmpVel.y / hitRadius, -1f, 1f);
         float power = (float) Math.sqrt(ndx * ndx + ndy * ndy);
@@ -484,7 +484,7 @@ public final class MatchWorld3D {
         if (nextServer != 1) return false;
         float startX = (random.nextFloat() - 0.5f) * TABLE_HALF_WIDTH * 0.6f;
         ballPos.set(startX, TABLE_TOP_Y + 1.2f, TABLE_HALF_LENGTH - 0.5f);
-        ballVel.set(0f, 5.0f, -10f); // toward P2 (−z); lands ~z=−5.4 (deep serve)
+        ballVel.set(0f, 5.0f, -10f * p2Effects.incomingSpeedMultiplier()); // toward P2 (−z); lands ~z=−5.4 (deep serve)
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
@@ -517,7 +517,7 @@ public final class MatchWorld3D {
             return tryClientServe();
         }
         if (!isClientCanHit()) return false;
-        if (!HitVelocity.computeFromRay(pickRay, ballPos, bot.getTargetScaleMultiplier(),
+        if (!HitVelocity.computeFromRay(pickRay, ballPos, bot.getTargetScaleMultiplier() * p2Effects.hitScaleMultiplier(),
                 bot.getReturnPowerMultiplier(), false, ballVel, hitPoint, tmpVel)) {
             return false;
         }
@@ -536,7 +536,7 @@ public final class MatchWorld3D {
         if (matchMode != MatchMode.PVP) return false; // BOT: P2 serves via server AI timer
         float startX = (random.nextFloat() - 0.5f) * TABLE_HALF_WIDTH * 0.6f;
         ballPos.set(startX, TABLE_TOP_Y + 1.2f, -TABLE_HALF_LENGTH + 0.5f);
-        ballVel.set(0f, 5.0f, 10f); // toward P1 (+z)
+        ballVel.set(0f, 5.0f, 10f * p1Effects.incomingSpeedMultiplier()); // toward P1 (+z)
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
@@ -637,6 +637,72 @@ public final class MatchWorld3D {
             p2Ready = false;
             prepareServe(GameConfig.BETWEEN_POINTS_DELAY, buildServeStatusText());
         }
+    }
+
+    public boolean applyItem(int playerNumber, ItemType item) {
+        if (phase != Phase.ITEM_PHASE) return false;
+        PlayerInventory inv    = playerNumber == 1 ? p1Inventory : p2Inventory;
+        PlayerInventory oppInv = playerNumber == 1 ? p2Inventory : p1Inventory;
+        DuelistState self      = playerNumber == 1 ? player : bot;
+        DuelistState opp       = playerNumber == 1 ? bot    : player;
+        ItemEffects selfFx     = playerNumber == 1 ? p1Effects : p2Effects;
+        ItemEffects oppFx      = playerNumber == 1 ? p2Effects : p1Effects;
+
+        if (!inv.remove(item)) return false;
+
+        switch (item) {
+            case PATCH_KIT   -> self.addLife(GameConfig.DEFAULT_LIVES);
+            case WIDE_PADDLE -> selfFx.wideClick    = true;
+            case SLOW_MO     -> selfFx.slowIncoming = true;
+            case STEAL       -> { ItemType stolen = oppInv.steal(random);
+                                  if (stolen != null) inv.add(stolen); }
+            case FAST_SERVE  -> oppFx.fastIncoming  = true;
+            case TINY_PADDLE -> oppFx.tinyPaddleActive = true;
+            case PUNCH       -> opp.setPunchTimer(10f);
+            case FLY_BAIT    -> spawnFlies(oppFx, playerNumber == 1 ? -1 : 1);
+            case COIN_FLIP   -> { if (random.nextFloat() < 0.5f) self.loseLife();
+                                  else opp.loseLife(); checkMatchOver(); }
+        }
+
+        itemUsedEvent  = true;
+        itemUsedPlayer = playerNumber;
+        itemUsedId     = item.getId();
+        return true;
+    }
+
+    private void spawnFlies(ItemEffects targetFx, int sideSign) {
+        int count = 2 + (int)(random.nextFloat() * 2); // 2 or 3
+        float[] xs = new float[count];
+        float[] zs = new float[count];
+        for (int i = 0; i < count; i++) {
+            xs[i] = (random.nextFloat() - 0.5f) * TABLE_HALF_WIDTH * 1.6f;
+            zs[i] = sideSign * (2f + random.nextFloat() * 4f);
+            targetFx.flies.add(new FlyState(xs[i], zs[i]));
+        }
+        flySpawnEvent = true;
+        flySpawnXs = xs;
+        flySpawnZs = zs;
+    }
+
+    private void checkMatchOver() {
+        if (player.getLives() <= 0) { outcome = MatchOutcome.BOT_WIN; ballVisible = false; }
+        else if (bot.getLives() <= 0) { outcome = MatchOutcome.PLAYER_WIN; ballVisible = false; }
+    }
+
+    public boolean consumeItemUsedEvent() {
+        boolean v = itemUsedEvent; itemUsedEvent = false; return v;
+    }
+    public int getItemUsedPlayer() { return itemUsedPlayer; }
+    public byte getItemUsedId()    { return itemUsedId; }
+
+    public boolean consumeFlySpawnEvent() {
+        boolean v = flySpawnEvent; flySpawnEvent = false; return v;
+    }
+    public float[] getFlySpawnXs() { return flySpawnXs; }
+    public float[] getFlySpawnZs() { return flySpawnZs; }
+
+    public int consumeFlyKilledIndex() {
+        int v = flyKilledIndex; flyKilledIndex = -1; return v;
     }
 
     public byte[] getLastDealtItems(int playerNumber) {

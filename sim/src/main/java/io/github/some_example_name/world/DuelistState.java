@@ -41,6 +41,10 @@ public final class DuelistState {
         return lives;
     }
 
+    public void addLife(int maxLives) {
+        lives = Math.min(lives + 1, maxLives);
+    }
+
     public float getPunchTimer() {
         return punchTimer;
     }
