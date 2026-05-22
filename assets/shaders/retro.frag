@@ -26,6 +26,7 @@ uniform float u_aberration;   // RGB channel split, e.g. 0.0025
 uniform float u_dither;       // dither magnitude in palette space, e.g. 0.06
 uniform float u_vignette;     // radial darkening, e.g. 0.55
 uniform float u_warm;         // amount of warm-bulb tint, e.g. 0.18
+uniform float u_blur;         // punch blur intensity 0..1
 
 // 16-color palette (locked to docs/art-style.md). RGB in 0..1.
 const int PALETTE_SIZE = 16;
@@ -96,6 +97,17 @@ void main() {
     float vDist = distance(v_texCoords, vec2(0.5));
     float vig   = 1.0 - smoothstep(0.35, 0.95, vDist) * u_vignette;
     color *= vig;
+
+    // Punch blur: amplify chromatic aberration and add desaturation
+    if (u_blur > 0.0) {
+        float blurAb = u_aberration + u_blur * 0.04;
+        vec2 caDir2 = (lowUv - 0.5);
+        float rr = texture2D(u_texture, lowUv + caDir2 * blurAb).r;
+        float gg = texture2D(u_texture, lowUv).g;
+        float bb = texture2D(u_texture, lowUv - caDir2 * blurAb).b;
+        color = vec3(rr, gg, bb);
+        color = mix(color, vec3(dot(color, vec3(0.299, 0.587, 0.114))), u_blur * 0.35);
+    }
 
     gl_FragColor = vec4(color, 1.0) * v_color;
 }
