@@ -3,12 +3,14 @@ package io.github.some_example_name.server;
 import com.badlogic.gdx.math.RandomXS128;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.Ray;
+import io.github.some_example_name.model.ItemType;
 import io.github.some_example_name.model.MatchConfig;
 import io.github.some_example_name.model.MatchMode;
 import io.github.some_example_name.model.MatchOutcome;
 import io.github.some_example_name.network.GameConnection;
 import io.github.some_example_name.network.PacketType;
 import io.github.some_example_name.world.MatchWorld3D;
+import io.github.some_example_name.world.MatchWorld3D.Phase;
 import io.github.some_example_name.world.ServerPickRay;
 
 import java.net.InetSocketAddress;
@@ -64,7 +66,7 @@ public final class GameServer {
 
             while (!shutdown) {
                 try {
-                    runOneMatch();
+                    runBestOf3();
                 } catch (java.net.SocketException stopped) {
                     // Server socket was closed via shutdown() — exit cleanly.
                     if (!shutdown) {
@@ -90,13 +92,9 @@ public final class GameServer {
         endMatchConnections();
     }
 
-    private void runOneMatch() throws Exception {
+    private void runBestOf3() throws Exception {
         MatchLobby lobby = new MatchLobby();
         System.out.println("[GameServer] Waiting for JOIN...");
-
-        // Poll every 200 ms so the loop can recheck isReady() after a JOIN
-        // arrives on the reader thread — without this, accept() would block
-        // forever in BOT mode because no second connection ever unblocks it.
         serverSocket.setSoTimeout(200);
         try {
             while (!lobby.isReady() && !shutdown) {
@@ -105,36 +103,56 @@ public final class GameServer {
                     GameConnection[] connRef = new GameConnection[1];
                     connRef[0] = GameConnection.wrap(socket, Runnable::run,
                         new LobbyListener(lobby, connRef));
-                } catch (java.net.SocketTimeoutException ignored) {
-                    // timeout — loop back and recheck isReady()
-                }
+                } catch (java.net.SocketTimeoutException ignored) {}
             }
         } finally {
-            serverSocket.setSoTimeout(0); // restore blocking for the rest of the match
+            serverSocket.setSoTimeout(0);
         }
-
         if (shutdown) return;
 
         p1 = lobby.p1;
         p2 = lobby.p2;
         MatchMode mode = lobby.mode;
-
         byte modeWire = mode == MatchMode.BOT ? PacketType.MODE_BOT : PacketType.MODE_PVP;
         p1.sendMatchReady(modeWire);
         if (p2 != null) p2.sendMatchReady(modeWire);
 
+        p1.setListener(new MatchPlayerListener(1));
+        if (p2 != null) p2.setListener(new MatchPlayerListener(2));
+
+        int p1Wins = 0, p2Wins = 0;
+        while (p1Wins < 2 && p2Wins < 2 && !shutdown) {
+            int roundWinner = runOneRound(mode);
+            if (roundWinner == 1) p1Wins++;
+            else p2Wins++;
+            sendRoundOverToAll(roundWinner, p1Wins, p2Wins);
+            System.out.println("[GameServer] Round over — P" + roundWinner
+                + " wins  (" + p1Wins + "-" + p2Wins + ")");
+            if (p1Wins < 2 && p2Wins < 2) {
+                LockSupport.parkNanos(2_000_000_000L);
+            }
+        }
+
+        int matchWinner = p1Wins >= 2 ? 1 : 2;
+        sendGameOverToAll(matchWinner);
+        System.out.println("[GameServer] Match over — winner P" + matchWinner);
+
+        endMatchConnections();
+        world = null;
+        p1 = null;
+        p2 = null;
+        System.out.println("[GameServer] Waiting for next JOIN...");
+    }
+
+    private int runOneRound(MatchMode mode) throws Exception {
         MatchWorld3D w = new MatchWorld3D(MatchConfig.createDefault(), new RandomXS128());
         w.setMatchMode(mode);
         world = w;
         matchRunning = true;
 
-        p1.setListener(new MatchPlayerListener(1));
-        if (p2 != null) p2.setListener(new MatchPlayerListener(2));
-
-        System.out.println("[GameServer] Match started mode=" + mode);
-
         long lastNs = System.nanoTime();
         float stateAcc = 0f;
+        Phase prevPhase = w.getPhase();
 
         while (matchRunning && !w.isMatchOver() && !shutdown) {
             long now = System.nanoTime();
@@ -142,13 +160,26 @@ public final class GameServer {
             lastNs = now;
 
             Runnable action;
-            while ((action = actions.poll()) != null) {
-                action.run();
-            }
+            while ((action = actions.poll()) != null) action.run();
 
             w.update(delta);
 
-            if (w.consumePaddleHitEvent()) sendSfxToAll(PacketType.SFX_PADDLE);
+            Phase curPhase = w.getPhase();
+            if (prevPhase != Phase.ITEM_PHASE && curPhase == Phase.ITEM_PHASE) {
+                broadcastItemDealt(w);
+            }
+            prevPhase = curPhase;
+
+            if (w.consumeItemUsedEvent()) {
+                broadcastItemUsed(w.getItemUsedPlayer(), w.getItemUsedId());
+            }
+            if (w.consumeFlySpawnEvent()) {
+                broadcastFlySpawn(w.getFlySpawnXs(), w.getFlySpawnZs());
+            }
+            int killed = w.consumeFlyKilledIndex();
+            if (killed >= 0) broadcastFlyKilled(killed);
+
+            if (w.consumePaddleHitEvent())  sendSfxToAll(PacketType.SFX_PADDLE);
             if (w.consumeTableBounceEvent()) sendSfxToAll(PacketType.SFX_TABLE);
 
             stateAcc += delta;
@@ -158,22 +189,11 @@ public final class GameServer {
             }
 
             long sleepNs = TICK_NS - (System.nanoTime() - now);
-            if (sleepNs > 100_000L) {
-                LockSupport.parkNanos(sleepNs);
-            }
+            if (sleepNs > 100_000L) LockSupport.parkNanos(sleepNs);
         }
 
-        if (w.isMatchOver()) {
-            int winner = w.getOutcome() == MatchOutcome.PLAYER_WIN ? 1 : 2;
-            sendGameOverToAll(winner);
-            System.out.println("[GameServer] Match over — winner P" + winner);
-        }
-
-        endMatchConnections();
         world = null;
-        p1 = null;
-        p2 = null;
-        System.out.println("[GameServer] Waiting for next JOIN...");
+        return w.getOutcome() == MatchOutcome.PLAYER_WIN ? 1 : 2;
     }
 
     private void endMatchConnections() {
@@ -218,6 +238,38 @@ public final class GameServer {
         GameConnection c1 = p1, c2 = p2;
         if (c1 != null) c1.sendGameOver(winner);
         if (c2 != null) c2.sendGameOver(winner);
+    }
+
+    private void broadcastItemDealt(MatchWorld3D w) {
+        GameConnection c1 = p1, c2 = p2;
+        if (c1 != null) c1.sendItemDealt(1, w.getLastDealtItems(1));
+        if (c1 != null) c1.sendItemDealt(2, w.getLastDealtItems(2));
+        if (c2 != null) c2.sendItemDealt(1, w.getLastDealtItems(1));
+        if (c2 != null) c2.sendItemDealt(2, w.getLastDealtItems(2));
+    }
+
+    private void broadcastItemUsed(int playerNumber, byte itemId) {
+        GameConnection c1 = p1, c2 = p2;
+        if (c1 != null) c1.sendItemUsed(playerNumber, itemId);
+        if (c2 != null) c2.sendItemUsed(playerNumber, itemId);
+    }
+
+    private void broadcastFlySpawn(float[] xs, float[] zs) {
+        GameConnection c1 = p1, c2 = p2;
+        if (c1 != null) c1.sendFlySpawn(xs, zs);
+        if (c2 != null) c2.sendFlySpawn(xs, zs);
+    }
+
+    private void broadcastFlyKilled(int idx) {
+        GameConnection c1 = p1, c2 = p2;
+        if (c1 != null) c1.sendFlyKilled(idx);
+        if (c2 != null) c2.sendFlyKilled(idx);
+    }
+
+    private void sendRoundOverToAll(int winner, int p1Wins, int p2Wins) {
+        GameConnection c1 = p1, c2 = p2;
+        if (c1 != null) c1.sendRoundOver(winner, p1Wins, p2Wins);
+        if (c2 != null) c2.sendRoundOver(winner, p1Wins, p2Wins);
     }
 
     // ── Lobby ─────────────────────────────────────────────────────────────────
