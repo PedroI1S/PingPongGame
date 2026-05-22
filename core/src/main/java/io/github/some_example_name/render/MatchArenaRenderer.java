@@ -21,6 +21,7 @@ import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Disposable;
 import com.badlogic.gdx.utils.ScreenUtils;
 import io.github.some_example_name.config.GameConfig;
+import io.github.some_example_name.world.FlyState;
 import io.github.some_example_name.world.ImpactParticle3D;
 import io.github.some_example_name.world.MatchWorld3D;
 
@@ -44,6 +45,10 @@ public final class MatchArenaRenderer implements Disposable {
     private Environment environment;
 
     private Model tableModel, netModel, ballModel, floorModel;
+    private Model flyModel;
+    private final com.badlogic.gdx.utils.Array<ModelInstance> flyInstances = new com.badlogic.gdx.utils.Array<>();
+    private float flyBuzzTimer;
+
     private ModelInstance tableInstance, netInstance, ballInstance, floorInstance;
 
     private final Vector3 worldToScreen = new Vector3();
@@ -81,6 +86,9 @@ public final class MatchArenaRenderer implements Disposable {
         return camera3D;
     }
 
+    public ModelBatch getModelBatch() { ensureInitialized(); return modelBatch; }
+    public Environment getEnvironment() { ensureInitialized(); return environment; }
+
     public ModelInstance getBallInstance() {
         ensureInitialized();
         return ballInstance;
@@ -107,6 +115,7 @@ public final class MatchArenaRenderer implements Disposable {
         if (ballVisible) {
             modelBatch.render(ballInstance, environment);
         }
+        for (ModelInstance fi : flyInstances) modelBatch.render(fi, environment);
         modelBatch.end();
         Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
     }
@@ -115,6 +124,24 @@ public final class MatchArenaRenderer implements Disposable {
         ensureInitialized();
         ballInstance.transform.setToTranslation(x, y, z);
     }
+
+    public void setFlies(java.util.List<FlyState> playerFlies, java.util.List<FlyState> oppFlies) {
+        flyInstances.clear();
+        addFlyInstances(playerFlies);
+        addFlyInstances(oppFlies);
+    }
+
+    private void addFlyInstances(java.util.List<FlyState> flies) {
+        for (FlyState fly : flies) {
+            if (!fly.alive) continue;
+            ModelInstance inst = new ModelInstance(flyModel);
+            float buzz = com.badlogic.gdx.math.MathUtils.sin(flyBuzzTimer * 8f) * 0.08f;
+            inst.transform.setToTranslation(fly.x, MatchWorld3D.TABLE_TOP_Y + 0.4f + buzz, fly.z);
+            flyInstances.add(inst);
+        }
+    }
+
+    public void tickFlyBuzz(float delta) { flyBuzzTimer += delta; }
 
     /**
      * Maps screen cursor to table-top (x, z). Returns {@link Vector2} with NaN if miss.
@@ -181,6 +208,7 @@ public final class MatchArenaRenderer implements Disposable {
         if (netModel != null) netModel.dispose();
         if (ballModel != null) ballModel.dispose();
         if (floorModel != null) floorModel.dispose();
+        if (flyModel != null) flyModel.dispose();
     }
 
     private void projectToHud(float wx, float wy, float wz) {
@@ -235,6 +263,11 @@ public final class MatchArenaRenderer implements Disposable {
             attrs
         );
         ballInstance = new ModelInstance(ballModel);
+
+        float fd = FlyState.FLY_RADIUS * 1.5f;
+        flyModel = mb.createSphere(fd, fd, fd, 6, 6,
+            new Material(ColorAttribute.createDiffuse(new Color(0.15f, 0.15f, 0.05f, 1f))),
+            Usage.Position | Usage.Normal);
 
         floorModel = mb.createBox(60f, 0.4f, 60f,
             new Material(ColorAttribute.createDiffuse(Color.valueOf("0E2026"))),
