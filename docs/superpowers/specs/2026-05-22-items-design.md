@@ -40,7 +40,7 @@ Between rounds, lives reset to 5 and inventories are cleared. The brief 2-second
 
 ## 2. Item Phase Mechanics
 
-Triggered after every point (a player hits 0 on that rally).
+Triggered after every point (a player loses a life on that rally).
 
 ### 2.1 Server steps
 
@@ -82,7 +82,7 @@ Triggered after every point (a player hits 0 on that rally).
 
 - **Next-rally effects** (`Wide Paddle`, `Slow-mo`, `Fast Serve`, `Tiny Paddle`) are stored in `ItemEffects` and consumed (cleared) at the end of the rally they apply to, regardless of hit outcome.
 - **Instant effects** (`Patch Kit`, `Steal`, `Coin Flip`) resolve immediately on the server when `USE_ITEM` is received.
-- **Timed effects** (`Punch`) store a countdown (`punchTimer`) in `DuelistState`; the client receives it via `STATE` and applies blur accordingly.
+- **Timed effects** (`Punch`) store a countdown (`punchTimer`) in the *opponent's* `DuelistState`; the server decrements it each second during the rally. The client receives it via `STATE` and drives blur intensity accordingly.
 - **Fly Bait** flies persist until swatted (CLICK ray-sphere hit on the fly) or until the rally ends — whichever comes first.
 
 ---
@@ -95,7 +95,7 @@ Triggered after every point (a player hits 0 on that rally).
 
 - `ItemType` (enum, 9 values) — `sim/model/ItemType.java`
 - `PlayerInventory` — list of up to 4 `ItemType`, with add/remove/steal helpers — `sim/model/PlayerInventory.java`
-- `ItemEffects` — one-rally flags for each effect: `wideClick`, `slowIncoming`, `fastIncoming`, `tinyPaddleActive`, `punchTimer`, `flies: List<FlyState>` — `sim/model/ItemEffects.java`
+- `ItemEffects` — one-rally flags for each effect: `wideClick`, `slowIncoming`, `fastIncoming`, `tinyPaddleActive`, `flies: List<FlyState>` — `sim/model/ItemEffects.java`. `MatchWorld3D` reads these in `tryHitBall` / `handleOpponentClick` / `botServe` and calls `clearItemEffects()` at rally end.
 - `FlyState` — position (x, z on table), alive flag — `sim/world/FlyState.java`
 
 **Modified classes:**
@@ -108,8 +108,8 @@ Triggered after every point (a player hits 0 on that rally).
   - Ball-fly collision check in `update()` — if ball sphere intersects any fly's sphere, fly dies and opponent loses 1 life.
   - `roundWins[2]` and `currentRound` counters.
 - `DuelistState`:
-  - Add `punchTimer` float.
-  - Remove static multipliers from constructor (now driven by `ItemEffects`).
+  - Add `punchTimer` float (counts down each second; client reads it from `STATE` to drive blur intensity).
+  - `targetScaleMultiplier`, `incomingTimeMultiplier`, `returnPowerMultiplier` become non-final and default to `1f`; `MatchWorld3D.applyItem()` overrides them and `clearItemEffects()` resets them to `1f` after each rally.
 - `GameServer`:
   - `runBestOf3()` outer loop.
   - `runOneRound()` — existing match loop, returns winner.
