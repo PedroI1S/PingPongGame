@@ -45,12 +45,19 @@ public final class GameConnection {
                              boolean ballVisible, int activePlayer)                {}
         default void onGameOver(int winnerPlayer)                                 {}
         default void onSfx(int sfxType)                                           {}
+        /** @param matchModeWire {@link PacketType#MODE_PVP} or {@link PacketType#MODE_BOT} */
+        default void onMatchReady(int matchModeWire)                              {}
         // Client → Server
         default void onHello()                                                    {}
+        default void onJoin(int matchModeWire)                                    {}
+        default void onClick(int screenX, int screenY, int viewportW, int viewportH) {}
+        /** @deprecated Use {@link #onClick}. */
         default void onServe()                                                    {}
+        /** @deprecated Use {@link #onClick}. */
         default void onHit(float vx, float vy, float vz)                         {}
         default void onBye()                                                      {}
         // Connection lifecycle
+        default void onConnected()                                                {}
         default void onDisconnected()                                             {}
         default void onError(String reason)                                       {}
     }
@@ -84,6 +91,7 @@ public final class GameConnection {
                 conn.socket = s;
                 conn.out    = new DataOutputStream(s.getOutputStream());
                 conn.startReader(s);
+                dispatch.execute(() -> conn.listener.onConnected());
             } catch (IOException e) {
                 if (!conn.closed) {
                     String msg = e.getMessage() == null ? e.toString() : e.getMessage();
@@ -162,7 +170,20 @@ public final class GameConnection {
                         int sfxType = in.readByte() & 0xFF;
                         dispatch.execute(() -> listener.onSfx(sfxType));
                     }
+                    case PacketType.MATCH_READY -> {
+                        int mode = in.readByte() & 0xFF;
+                        dispatch.execute(() -> listener.onMatchReady(mode));
+                    }
                     case PacketType.HELLO -> dispatch.execute(() -> listener.onHello());
+                    case PacketType.JOIN -> {
+                        int mode = in.readByte() & 0xFF;
+                        dispatch.execute(() -> listener.onJoin(mode));
+                    }
+                    case PacketType.CLICK -> {
+                        int sx = in.readInt(), sy = in.readInt();
+                        int vw = in.readInt(), vh = in.readInt();
+                        dispatch.execute(() -> listener.onClick(sx, sy, vw, vh));
+                    }
                     case PacketType.SERVE -> dispatch.execute(() -> listener.onServe());
                     case PacketType.HIT   -> {
                         float vx = in.readFloat(), vy = in.readFloat(), vz = in.readFloat();
@@ -217,10 +238,28 @@ public final class GameConnection {
         write(() -> { out.writeByte(PacketType.SFX); out.writeByte(sfxType); });
     }
 
+    public void sendMatchReady(int matchModeWire) {
+        write(() -> { out.writeByte(PacketType.MATCH_READY); out.writeByte(matchModeWire); });
+    }
+
     // ── Send — Client → Server ────────────────────────────────────────────────
 
     public void sendHello() {
         write(() -> out.writeByte(PacketType.HELLO));
+    }
+
+    public void sendJoin(int matchModeWire) {
+        write(() -> { out.writeByte(PacketType.JOIN); out.writeByte(matchModeWire); });
+    }
+
+    public void sendClick(int screenX, int screenY, int viewportWidth, int viewportHeight) {
+        write(() -> {
+            out.writeByte(PacketType.CLICK);
+            out.writeInt(screenX);
+            out.writeInt(screenY);
+            out.writeInt(viewportWidth);
+            out.writeInt(viewportHeight);
+        });
     }
 
     public void sendServe() {

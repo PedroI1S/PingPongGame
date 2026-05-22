@@ -37,22 +37,42 @@ public final class PacketType {
      */
     public static final byte SFX       = 5;
 
+    /**
+     * Match is about to start (both players connected, or bot mode ready).
+     * Payload: {@code byte matchMode} — {@code 0} = PVP, {@code 1} = BOT.
+     */
+    public static final byte MATCH_READY = 6;
+
+    /** {@link io.github.some_example_name.model.MatchMode#PVP} wire value. */
+    public static final byte MODE_PVP = 0;
+    /** {@link io.github.some_example_name.model.MatchMode#BOT} wire value. */
+    public static final byte MODE_BOT = 1;
+
     // ── Client → Server ───────────────────────────────────────────────────────
 
     /** Initial greeting after connection. No payload. */
     public static final byte HELLO     = 10;
 
-    /** P1 requests a serve. No payload. */
-    public static final byte SERVE     = 11;
+    /**
+     * Join the next available match.
+     * Payload: {@code byte mode} — {@link #MODE_PVP} or {@link #MODE_BOT}.
+     */
+    public static final byte JOIN      = 11;
 
     /**
-     * Player hit the ball.
-     * Payload: {@code float vx, vy, vz} (return velocity in world coordinates).
+     * Screen click (server builds pick ray and runs hit test).
+     * Payload: {@code int screenX, screenY, viewportWidth, viewportHeight}.
      */
-    public static final byte HIT       = 12;
+    public static final byte CLICK     = 12;
+
+    /** @deprecated Legacy serve — use {@link #CLICK}. */
+    public static final byte SERVE     = 13;
+
+    /** @deprecated Legacy hit — use {@link #CLICK}. */
+    public static final byte HIT       = 14;
 
     /** Clean disconnect notice. No payload. */
-    public static final byte BYE       = 13;
+    public static final byte BYE       = 15;
 
     // ── SFX sub-types ─────────────────────────────────────────────────────────
 

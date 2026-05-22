@@ -7,12 +7,45 @@ import com.badlogic.gdx.graphics.Color;
  *
  * <p>Every visible surface in the game is quantized to these 16 tones by
  * the retro post-process shader (see
- * {@link io.github.some_example_name.render.RetroPostProcess#PALETTE_RGB}).
+ * {@link #toShaderRgb()} / {@link io.github.some_example_name.render.RetroPostProcess#PALETTE_RGB}).
  * Authoring outside this set is fine, but expect colors to snap to the
  * nearest match.</p>
  */
 public final class Palette {
     private Palette() {}
+
+    /**
+     * 16-color RGB triplets for {@link io.github.some_example_name.render.RetroPostProcess}.
+     * Order matches the shader palette table in {@code docs/art-style.md}.
+     */
+    public static float[] toShaderRgb() {
+        float[] out = new float[16 * 3];
+        int i = 0;
+        i = appendRgb(out, i, BG);
+        i = appendRgb(out, i, BG2);
+        i = appendRgb(out, i, BORDER);
+        i = appendRgb(out, i, BORDER_HI);
+        i = appendRgb(out, i, Color.valueOf("6B5B4B"));
+        i = appendRgb(out, i, RED_DIM);
+        i = appendRgb(out, i, RED_GLOW);
+        i = appendRgb(out, i, RED);
+        i = appendRgb(out, i, GREEN_DIM);
+        i = appendRgb(out, i, GREEN);
+        i = appendRgb(out, i, Color.valueOf("4A5A3C"));
+        i = appendRgb(out, i, TEXT_DIM);
+        i = appendRgb(out, i, TEXT);
+        i = appendRgb(out, i, WARM_DIM);
+        i = appendRgb(out, i, WARM);
+        appendRgb(out, i, Color.BLACK);
+        return out;
+    }
+
+    private static int appendRgb(float[] out, int offset, Color c) {
+        out[offset]     = c.r;
+        out[offset + 1] = c.g;
+        out[offset + 2] = c.b;
+        return offset + 3;
+    }
 
     // ── Backgrounds / surfaces ────────────────────────────────────────────────
     public static final Color BG        = Color.valueOf("0A0608");

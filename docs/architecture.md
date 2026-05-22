@@ -2,228 +2,252 @@
 
 ## Goal
 
-A LibGDX foundation for a 3D first-person ping-pong reaction game.
-Single binary that runs both single-player (vs bot) and LAN multiplayer
-through a server-authoritative architecture.
+A LibGDX 3D first-person ping-pong reaction game with a clean client/server
+split. Single binary runs both **VS BOT** and **LAN multiplayer**; both
+modes are served by the same authoritative `GameServer` — either in-process
+or out-of-process — so there is one physics implementation.
+
+## Module split
+
+```
+PingPongGame/
+├── sim/        # shared physics + protocol + headless server
+├── server/     # fat-jar launcher around sim/GameServer
+├── core/       # client: screens, rendering, settings, input
+└── lwjgl3/     # LWJGL3 desktop launcher for `core`
+```
+
+| Module | Depends on | Brings |
+|---|---|---|
+| `sim` | `gdx` (math only) | `MatchWorld3D`, `GameServer`, `GameConnection`, `PacketType`, `ServerPickRay`, `HitVelocity`, all model / config classes |
+| `server` | `sim` | `ServerMain` (~10 lines), application/jar Gradle setup |
+| `core` | `sim`, libGDX UI | every `Screen`, `MatchArenaRenderer`, `RetroPostProcess`, `GameContext`, `GameSession`, `GameSettings`, `InProcessServer`, `LocalServerProcess` |
+| `lwjgl3` | `core` | `Lwjgl3Launcher` |
+
+Why three layers instead of two?
+
+- `sim` has no UI / no `SpriteBatch` / no fonts so it's safe to depend on
+  from a headless deploy. The libGDX `gdx` dependency is just for `Vector3`,
+  `MathUtils`, `Pool`, etc. — no rendering.
+- `server` is a single `main()` so the build can produce a small standalone
+  fat jar without dragging in any of the client.
 
 ## Main technical decisions
 
 ### 1. `Main` owns screen navigation
 
-`Main` extends `Game`. The screen flow is:
+`Main` extends `Game`. The flow:
 
-- `LoadingScreen` — boots `AssetManager`, builds procedural textures
-- `MenuScreen` — entry; ENTER for single-player, M for multiplayer
-- `MatchScreen3D` — single-player vs the local bot
-- `MultiplayerLobbyScreen` — H to host, J to join, room code entry
-- `NetMatchScreen` — the networked match (used by both players)
+- `LoadingScreen` — boots `AssetManager`, builds procedural textures.
+- `MenuScreen` — entry. **VS BOT**, **MULTIPLAYER**, **CONFIGURATION**
+  buttons (ENTER / M / C also work).
+- `MatchConnectScreen` — bridges menu → match. For VS BOT it spawns an
+  `InProcessServer` then opens a `GameConnection`; for LAN-JOIN it just
+  opens the connection. Sends `JOIN(mode)` on connect, waits for
+  `WELCOME` + `MATCH_READY`, then transitions to `NetMatchScreen`.
+- `MultiplayerLobbyScreen` — H / J / room-code entry. HOST spawns its own
+  in-process server bound to `0.0.0.0`; JOIN dials a remote IP.
+- `NetMatchScreen` — the actual match. Pure draw + click.
+- `PauseMenuScreen` — overlay over a paused match.
+- `ConfigScreen` — tabbed settings (AUDIO / GRAPHICS / CONTROLS / GAME).
 
 `Main` doesn't override `render()` — `Game.render()` already delegates to
-the active `Screen.render(delta)`.
+the active screen.
 
 ### 2. `GameContext` holds shared lifetime objects
 
-`GameContext` owns:
+Owns: `SpriteBatch`, `FitViewport`, fonts, `GlyphLayout`, `GameAssets`,
+`GameSession`, `GameSettings`, and the lazily-built `RetroPostProcess`.
 
-- `SpriteBatch`
-- `FitViewport`
-- title and body fonts
-- `GlyphLayout`
-- `GameAssets`
-- `GameSession`
+### 3. `GameSession` carries the multiplayer link
 
-This keeps screens lightweight and avoids recreating heavy systems
-between transitions.
-
-### 3. `GameSession` stores cross-screen state
-
-`GameSession` persists:
+Persists across screens:
 
 - last match outcome (so the menu can show "VICTORY" / "DEFEAT")
-- the active multiplayer `GameConnection` and player number (1 or 2)
-- the local `GameServer` instance when this client is also the host
+- the active `GameConnection`, player number (1 or 2), `MatchMode`
+- a stop hook for the embedded server (`InProcessServer::stop` or
+  `LocalServerProcess::stop`) — fired on `clearMultiplayer()` so the
+  server dies with the match
 - the remote player's display name
 - a shared `RandomXS128`
 
-`MatchConfig.createDefault()` is built fresh per match — there is no
-pre-match loadout that mutates it.
+`MatchConfig.createDefault()` is built fresh per match — no pre-match
+loadout.
 
 ### 4. Asset pipeline is procedural
 
-`GameAssets` wraps LibGDX `AssetManager`.
+`GameAssets` wraps libGDX `AssetManager`. The visuals are six textures
+generated at startup through `ProceduralAssetsLoader` — pixel, panel,
+background, glow, aim ring, noise. The only file assets loaded are the
+three audio clips. The 3D table / net / ball / floor are `ModelBuilder`
+geometry built by `MatchArenaRenderer`.
 
-The visuals are six textures generated at startup through
-`ProceduralAssetsLoader` — pixel, panel, background, glow, aim ring,
-noise. No PNGs ship for visuals; the only file assets loaded are the
-three audio clips (`Sounds/Effects/...`, `Sounds/Music/...`).
+### 5. Server-authoritative architecture
 
-The 3D table, net, ball, and floor are not textures at all — they are
-`ModelBuilder` box / sphere geometry assembled when the match screen
-shows.
+`GameServer` (in `sim/`) is a persistent loop:
 
-### 5. Input is per-screen
+```
+runServer:
+  bind(serverSocket); onListening.run();
+  while (!shutdown) {
+    runOneMatch():
+      MatchLobby lobby; accept() connections until ready
+        - first JOIN locks the mode
+        - PVP needs P1 + P2; BOT is ready with just P1
+      send MATCH_READY to all
+      build MatchWorld3D + setMatchMode
+      loop at 60 Hz:
+        - drain action queue (CLICK / BYE)
+        - world.update(delta)
+        - emit SFX
+        - every 1/30 s: broadcast STATE to all
+      send GAME_OVER
+      close connections, loop again
+  }
+```
 
-Each screen owns its own `InputAdapter`:
+Two entry points for a client to reach this server:
 
-- `MenuInputProcessor` — ENTER / mouse to advance, M for multiplayer
-- `MatchScreen3D.Input3D` — click to return, R restart, ESC menu
-- `NetMatchScreen.NetInput` — click to serve / return, ESC menu
-- `MultiplayerLobbyScreen.InputHandler` — H/J/typing/ENTER
+- **In-process** (`InProcessServer`) — spawns the server on a daemon thread
+  in the client's JVM. Used by VS BOT (bound `127.0.0.1`) and HOST
+  (bound `0.0.0.0`). Synchronous startup via a `CountDownLatch`
+  triggered by the `onListening` callback added to `GameServer.run`.
+- **Subprocess** (`LocalServerProcess`) — runs the `server` fat jar in
+  a child JVM. Detects readiness by tailing stdout. Currently not
+  wired into any screen but kept as a fallback.
 
-All registered via `Gdx.input.setInputProcessor` in `show()` and cleared
-in `hide()`.
+### 6. Click-based protocol
 
-### 6. `MatchWorld3D` owns the simulation
+Clients **never compute physics**. On a mouse click they emit:
 
-`MatchWorld3D` is the authoritative game state. Same class is used for:
+```
+CLICK { int screenX, int screenY, int viewportWidth, int viewportHeight }
+```
 
-- single-player (instantiated locally in `MatchScreen3D`)
-- multiplayer (instantiated inside `GameServer` when hosting)
+The server reconstructs the same camera the client used
+(`ServerPickRay.fromScreen(playerNumber, x, y, vw, vh)` — mirrors
+`MatchArenaRenderer`'s position / FOV) and feeds the pick ray into
+`MatchWorld3D.handlePlayerClick` / `handleOpponentClick`. This guarantees:
 
-It owns the ball position, velocity, lives, phase machine
-(PREPARE_SERVE → INCOMING → OUTGOING → BOT_RESOLVE), bot AI for
-single-player, scoring rule (loser serves next), and impact-particle
-pool. The 2D side-view world (`MatchWorld`, `IncomingBall`,
-`TableGeometry`, etc.) is gone.
+- The same physics decides whether a click was a hit, regardless of who
+  clicked.
+- A malicious client can't fabricate an impossible return velocity —
+  `HitVelocity.computeFromRay` is run server-side.
 
-### 7. Multiplayer is server-authoritative
+The legacy `HIT(vx,vy,vz)` packet still exists for compatibility but is
+not used by the live flow. `HitVelocity.sanitizeNetworkReturn` validates
+it if anything ever emits one.
 
-When a player presses HOST:
+### 7. Networking layer
 
-1. `GameServer` starts on a daemon thread; `ServerSocket(7777)` opens.
-2. The host's game connects to `127.0.0.1:7777` as Player 1.
-3. The other player connects to the host's IP as Player 2.
-4. Server runs `MatchWorld3D.update(delta)` at 60 Hz.
-5. Server broadcasts a STATE packet to both clients at 30 Hz.
-6. Clients dead-reckon the ball between snapshots using gravity, send
-   only SERVE / HIT inputs to the server.
-
-Both clients are pure drawing + input — even the host's own game
-window. There is no host-advantage in physics; the host just happens
-to also run the server.
-
-### 8. Networking layer
-
-- `network/GameConnection` — typed binary wrapper around a TCP `Socket`.
-  Reader thread decodes packets and dispatches via an `Executor`.
-  Clients pass `Gdx.app::postRunnable` (callbacks land on the GL
-  thread). The server passes `Runnable::run` (callbacks fire on the
-  reader thread, posted to a `LinkedBlockingQueue` for the game loop).
-- `network/PacketType` — wire format constants (WAITING, WELCOME,
-  STATE, GAME_OVER, SFX, HELLO, SERVE, HIT, BYE).
-- `network/RoomCode` — host's IPv4 encoded as a 7-character base-36
+- `sim/network/GameConnection` — typed binary wrapper around `Socket`.
+  Reader thread decodes packets and dispatches via an `Executor`. Clients
+  pass `Gdx.app::postRunnable` (callbacks land on the GL thread); the
+  server passes `Runnable::run` (callbacks fire on the reader thread,
+  queued via `LinkedBlockingQueue` into the game loop).
+- `sim/network/PacketType` — wire-format constants. See README for the
+  full packet table.
+- `sim/network/RoomCode` — host's IPv4 encoded as a 7-character base-36
   string so players don't type dotted quads.
 
-### 9. Object pooling
+### 8. Server hit-test parity
 
-`ImpactParticle3D` is managed through a LibGDX `Pool` so bounce sparks
-don't allocate per frame.
+`MatchArenaRenderer` builds its `PerspectiveCamera` with:
 
-## Package responsibilities
+```
+fov = 60°
+target = (0, TABLE_TOP_Y, 0)
+position = target + (0, 2.5, ±11)   // ±11 for P1 / P2
+near = 0.1, far = 100
+up = (0, 1, 0)
+```
 
-### `assets`
+`ServerPickRay.fromScreen` constructs an identical camera so
+`cam.getPickRay(x, y)` produces the same ray the client sees. The
+viewport dimensions sent in `CLICK` make this resolution-independent.
 
-- `GameAssets` — central asset gateway
-- `ProceduralAssets` — six procedurally generated textures
-- `ProceduralAssetsLoader` — custom `AssetManager` loader that has no
-  external file dependencies
+### 9. Rendering
 
-### `config`
+- **`MatchArenaRenderer`** owns the 3D scene (table / net / ball / floor)
+  and the camera. Exposes `setCameraShake(dx, dy, dz)` so the match
+  screen can wobble the view on bounces and lost lives.
+- **`RetroPostProcess`** wraps the match render in an FBO and applies a
+  palette-quantized + dithered + vignetted fragment shader. **Match
+  screens only** — menus skip it so text stays crisp.
+- 2D HUD over the 3D pass: lives, status text, aim ring, bounce particles
+  projected back onto screen-space, optional FPS counter overlay.
 
-- `GameConfig` — shared tuning constants (lives, timings, viewport
-  size, network timeout, port)
-- `Palette` — UI colors
+### 10. Settings
 
-### `core`
+`GameSettings` persists via libGDX `Preferences`:
 
-- `GameContext` — app-wide resources
-- `GameSession` — cross-screen state, holds the multiplayer connection
+- Audio: master / music / sfx / ui volumes (0–100). Composite getters
+  `getMusicGain()` and `getSfxGain()` give the master-multiplied 0..1
+  values used by `NetMatchScreen` when playing sounds.
+- Graphics: fullscreen on/off, window resolution preset (hidden when
+  fullscreen), retro filter on/off, retro intensity preset.
+- Game: show FPS counter, screen shake on/off.
 
-### `input`
-
-- `MenuInputProcessor` — single-screen processor; lobby / match
-  screens have their own inner-class adapters
-
-### `model`
-
-- `MatchConfig` / `FighterConfig` — per-match tuning
-- `MatchOutcome` / `ArenaSide` — enums
-
-### `network`
-
-- `GameConnection`, `PacketType`, `RoomCode`
-
-### `screen`
-
-- `BaseScreen` — shared helpers
-- `LoadingScreen` — asset boot with progress bar
-- `MenuScreen` — entry point
-- `MatchScreen3D` — single-player match
-- `MultiplayerLobbyScreen` — host / join flow
-- `NetMatchScreen` — networked match (symmetric for P1 and P2)
-- `UIDraw` — primitive HUD rendering helpers
-
-### `server`
-
-- `GameServer` — headless authoritative loop, accepts two TCP
-  connections, runs `MatchWorld3D` at 60 Hz, broadcasts STATE at
-  30 Hz, processes SERVE / HIT inputs through a thread-safe queue
-
-### `world`
-
-- `MatchWorld3D` — authoritative simulation + bot AI
-- `DuelistState` — per-side runtime state (lives, multipliers)
-- `ImpactParticle3D` — pooled feedback effect
+`MatchConnectScreen` / `MultiplayerLobbyScreen` / `MenuScreen` /
+`PauseMenuScreen` / `ConfigScreen` / `LoadingScreen` all render straight
+to the back buffer (no `RetroPostProcess`); only `NetMatchScreen`
+wraps in the post-process.
 
 ## Match loop
 
-### Single-player
+### VS BOT
 
-1. Bot serves automatically (PREPARE_SERVE phase, short timer).
-2. Ball flies toward the player at +z.
-3. Player clicks the ball; `MatchWorld3D.tryHitBall(Ray)` does ray-sphere
-   intersection and computes a return velocity.
-4. Ball flies toward bot at −z.
-5. Bot either returns it (probability based on `botBaseReturnChance`)
-   or scores a miss for itself.
-6. Whoever scored last serves the next point.
+1. P1 (player) connects, sends `JOIN(BOT)`. `setMatchMode(BOT)` sets
+   `nextServer = 2` and `statusText = "Bot is preparing the opening shot."`.
+2. After `OPENING_DELAY`, the server auto-runs `botServe()` (this only
+   happens in BOT mode).
+3. Ball flies +z toward P1 (INCOMING phase from the server's POV).
+4. P1 clicks → `CLICK` packet → server `handlePlayerClick(ray)` →
+   `tryHitBall(ray)` if past the net.
+5. Ball flies −z back. On bounce on the bot's side, phase →
+   `BOT_RESOLVE`. After `BOT_RESPONSE_DELAY`, the bot returns (with a
+   tuned probability) or misses.
+6. Scorer serves next: P1 clicks to serve when `nextServer == 1`, bot
+   auto-serves when `nextServer == 2`.
 
-### Multiplayer
+### PvP
 
-Same simulation, but on the server. P1's input drives `tryPlayerServe`
-during PREPARE_SERVE and `playerHit` during INCOMING. P2's input drives
-`acceptClientHit` during OUTGOING / BOT_RESOLVE. `getActivePlayer()`
-tells each client whose turn it is so the UI can prompt correctly.
+Same physics. `setMatchMode(PVP)` sets `nextServer = 1` so P1 opens.
+Either side's click goes through `handlePlayerClick` (P1) or
+`handleOpponentClick` (P2). No auto-serve.
 
 ## Why server-authoritative
 
-Two reasons:
+- **Symmetry.** P1 and P2 see the same physics — no local-simulation
+  advantage. The client is one class (`NetMatchScreen`) instead of
+  host-vs-client branches.
+- **Anti-cheat surface area.** Server validates every CLICK. Clients
+  can't send velocities directly.
+- **Deploy flexibility.** Same `GameServer` runs in-process for VS BOT
+  / HOST, or out-of-process for a dedicated deploy. The wire format is
+  identical.
 
-- **Symmetry.** P1 and P2 see the exact same physics — neither has a
-  local-simulation advantage. The screen code can be one class
-  (`NetMatchScreen`) instead of host-vs-client branches.
-- **Anti-cheat surface area.** Even on LAN, the server gets to validate
-  inputs (it doesn't yet — see `playerHit` / `acceptClientHit` for the
-  hooks). When this moves to the internet, that validation matters more.
+## Things that hurt and what to do
 
-## Rendering
-
-3D pass: `ModelBatch` with a single `DirectionalLight` + ambient
-attribute. Floor / table / net / ball are box / sphere instances drawn
-in that order with depth test enabled.
-
-2D HUD pass: depth disabled, `SpriteBatch` over the same frame. The
-aim ring and bounce particles are placed via `camera.project(...)` so
-they track 3D positions. The cursor projects onto the table-top plane
-through `camera.unproject(...)` and an analytic ray-plane intersection.
+- **Snapshot interpolation.** Clients currently *extrapolate* from the
+  last STATE using gravity. On internet latency (30–150 ms RTT, occasional
+  packet loss / reorder) this looks jittery. Buffer ~100 ms of incoming
+  snapshots and render the past — smooth and accurate, at the cost of a
+  small delay.
+- **Client-side prediction.** Same problem from the input side. Today the
+  click effect doesn't appear until the next STATE confirms it.
+- **HIT-velocity sanitizer is no longer reachable** in the live path —
+  `CLICK` made it dead code. Keep the function (cheap insurance for
+  future deviations) but the audit surface is now `ServerPickRay` +
+  `tryHitBall`.
+- **Reconnect.** A momentary disconnect kills the match. Session IDs
+  + buffered STATE replay would fix it; not implemented.
 
 ## Good next refactors
 
-- Server-side validation of HIT velocities (clamp into a plausible
-  range, reject hits outside the legal click zone).
-- Snapshot interpolation instead of extrapolation in the client (see
-  `docs/plan.md` — needed for internet latency).
-- Pull match-tuning constants out of `GameConfig` into a JSON profile
-  so different difficulties can be loaded without recompiling.
-- Add an event bus (`PaddleHit`, `TableBounce`, `PointScored`) so
-  audio, particles, and HUD are decoupled from the simulation.
+- Snapshot interpolation in `NetMatchScreen` (see above).
+- `ServePattern` declarative bot recipes (fast straight / slow fakeout /
+  cross / wide) instead of one `botBaseReturnChance` knob.
+- Event bus (`PaddleHit`, `TableBounce`, `PointScored`) so audio,
+  particles, and HUD decouple from `MatchWorld3D`'s polled flags.
+- Steam Networking + Lobbies for online play (see `docs/plan.md`).

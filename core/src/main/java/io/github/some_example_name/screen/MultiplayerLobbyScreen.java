@@ -15,7 +15,7 @@ import io.github.some_example_name.config.Palette;
 import io.github.some_example_name.network.GameConnection;
 import io.github.some_example_name.network.PacketType;
 import io.github.some_example_name.network.RoomCode;
-import io.github.some_example_name.server.GameServer;
+import io.github.some_example_name.model.MatchMode;
 
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -30,9 +30,10 @@ import java.util.List;
  * Keyboard shortcuts (H / J / ENTER / ESC) still work.</p>
  *
  * <h3>HOST</h3>
- * Click [HOST] → embedded {@link GameServer} starts → game connects to
- * {@code localhost:}{@link PacketType#PORT} as Player 1 → on
- * {@code WELCOME(1)} the lobby transitions to {@link NetMatchScreen}.
+ * Click [HOST] → connects to the running server → {@code JOIN(pvp)} → waits for
+ * a second player → {@link NetMatchScreen}.
+ *
+ * <p>Start the server first: {@code ./gradlew server:run}</p>
  *
  * <h3>JOIN</h3>
  * Click [JOIN] → type the host's 7-char room code → click [CONNECT] →
@@ -53,7 +54,6 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     private String errorText;
 
     private GameConnection pendingConn;
-    private GameServer     pendingServer;
 
     // ── Buttons ───────────────────────────────────────────────────────────────
 
@@ -236,19 +236,10 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     // ── Connection logic ──────────────────────────────────────────────────────
 
     private void startHosting() {
+        // The dedicated server is already running (auto-launched by Main at startup
+        // on 0.0.0.0 so LAN guests can reach the host's IP directly).
+        // Just connect to it locally and send JOIN(PVP).
         phase = Phase.HOSTING_WAIT;
-        GameServer server = new GameServer();
-        pendingServer = server;
-        server.start(
-            context.getSession().buildMatchConfig(),
-            context.getSession().getRandom(),
-            () -> Gdx.app.postRunnable(this::onServerReady),
-            () -> Gdx.app.postRunnable(() -> showError("server failed to start"))
-        );
-    }
-
-    private void onServerReady() {
-        if (phase != Phase.HOSTING_WAIT) return;
         openConnection("127.0.0.1");
     }
 
@@ -283,24 +274,49 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
 
     private void cleanupPending() {
         if (pendingConn   != null) { pendingConn.close();  pendingConn   = null; }
-        if (pendingServer != null) { pendingServer.stop(); pendingServer = null; }
+        context.getSession().clearMultiplayer();
     }
 
     // ── Lobby listener (GL thread) ────────────────────────────────────────────
 
     private final class LobbyListener implements GameConnection.Listener {
-        @Override public void onWaiting() { /* already in HOSTING_WAIT */ }
+        private int assignedPlayer;
+        private boolean welcomeReceived;
+        private boolean matchReadyReceived;
+
+        @Override
+        public void onConnected() {
+            if (pendingConn != null) {
+                pendingConn.sendJoin(PacketType.MODE_PVP);
+            }
+        }
+
+        @Override
+        public void onWaiting() {
+            phase = Phase.HOSTING_WAIT;
+        }
 
         @Override
         public void onWelcome(int playerNumber) {
-            if (pendingConn == null) return;
-            context.getSession().setMultiplayerConnection(pendingConn, playerNumber, pendingServer);
-            pendingConn   = null;
-            pendingServer = null;
+            assignedPlayer = playerNumber;
+            welcomeReceived = true;
+            tryEnterMatch();
+        }
+
+        @Override
+        public void onMatchReady(int matchModeWire) {
+            matchReadyReceived = true;
+            tryEnterMatch();
+        }
+
+        private void tryEnterMatch() {
+            if (!welcomeReceived || !matchReadyReceived || pendingConn == null) return;
+            context.getSession().setMultiplayerConnection(pendingConn, assignedPlayer, MatchMode.PVP);
+            pendingConn = null;
             game.openNetMatch();
         }
 
-        @Override public void onDisconnected()  { showError("connection lost before match started"); }
+        @Override public void onDisconnected()  { showError("connection lost — is the server running?"); }
         @Override public void onError(String r) { showError(r); }
     }
 

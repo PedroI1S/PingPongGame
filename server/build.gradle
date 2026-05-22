@@ -1,0 +1,36 @@
+plugins {
+  id 'application'
+}
+
+application.mainClass = 'io.github.some_example_name.server.ServerMain'
+application.applicationName = appName + '-server'
+eclipse.project.name = appName + '-server'
+
+dependencies {
+  implementation project(':sim')
+}
+
+jar {
+  archiveFileName.set("${appName}-server-${projectVersion}.jar")
+  duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+  dependsOn configurations.runtimeClasspath
+  from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
+  exclude('META-INF/INDEX.LIST', 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA')
+  dependencies {
+    exclude('META-INF/INDEX.LIST', 'META-INF/maven/**')
+  }
+  manifest {
+    attributes 'Main-Class': application.mainClass, 'Multi-Release': 'true'
+  }
+  doLast {
+    file(archiveFile).setExecutable(true, false)
+  }
+}
+
+run {
+  workingDir = rootProject.projectDir
+}
+
+tasks.register('dist') {
+  dependsOn 'jar'
+}

@@ -3,7 +3,44 @@
 The 3D physics + LAN-multiplayer foundation is in. This doc tracks
 what's queued next, in rough priority order.
 
-## 1. In-match item pickups
+## What's implemented
+
+### Client / server split
+
+Modules: **`sim`** (shared physics + protocol + headless server), **`server`**
+(fat-jar launcher), **`core`** (client), **`lwjgl3`** (desktop launcher).
+
+| Client action | What happens |
+|---|---|
+| **VS BOT** | `MatchConnectScreen(BOT, spawnLocal=true)` boots an `InProcessServer` on `127.0.0.1:7777` on a daemon thread, then opens a `GameConnection` and sends `JOIN(MODE_BOT)`. Server's bot AI plays P2. |
+| **HOST** | `MultiplayerLobbyScreen.startHosting()` boots an `InProcessServer` on `0.0.0.0:7777`, connects locally with `JOIN(MODE_PVP)`, waits for a second player. |
+| **JOIN** | Decodes the room code to an IP, opens a `GameConnection`, sends `JOIN(MODE_PVP)`. Server pairs it with the waiting host. |
+
+No JAR build is required for VS BOT / HOST — the server lives in the same
+JVM. Override with `PINGPONG_SERVER_HOST` if you want clients to connect
+to an external server (e.g., a Docker / VPS deploy of `:server:run`).
+
+### Click-driven protocol
+
+Clients never compute physics. On a mouse click they send
+`CLICK { screenX, screenY, viewportW, viewportH }`. The server rebuilds
+the pick ray with `ServerPickRay.fromScreen(playerNumber, …)` — the
+camera matches `MatchArenaRenderer` exactly — and feeds it into
+`MatchWorld3D.handlePlayerClick / handleOpponentClick`.
+
+### Settings persistence
+
+`GameSettings` saves to libGDX `Preferences`:
+
+- Audio: Master / Music / SFX / UI volumes. Music gain applied on
+  `NetMatchScreen.show()`; SFX gain applied per playback.
+- Graphics: fullscreen on/off, window-res preset, retro filter on/off
+  + intensity preset.
+- Game: Show FPS counter (HUD overlay), Screen shake on/off.
+
+## What's queued
+
+### 1. In-match item pickups
 
 The pre-match loadout was removed. Items return as on-table pickups
 mid-match.
@@ -38,7 +75,7 @@ the server when a player's click hit-tests the item.
 Once the loop feels good, add fakeout / sabotage items (forces a
 specific shot type from the opponent, etc.).
 
-## 2. Online multiplayer (Steam)
+### 2. Online multiplayer (Steam)
 
 LAN-only today because the room code is the host's local IPv4. Going
 to the internet means dealing with NAT and friend discovery. Steamworks
@@ -74,7 +111,7 @@ gives both for free.
 `MatchWorld3D`, `GameServer`, the binary protocol, the symmetric
 `NetMatchScreen`. Only the transport layer is swapped.
 
-## 3. Latency / cheating polish
+### 3. Latency / cheating polish
 
 Needed once the game runs over the internet, not before.
 
@@ -113,7 +150,7 @@ to every packet. If a client misses too long, the server holds the
 session for ~10 seconds; reconnecting clients resume from the latest
 STATE.
 
-## 4. Bot variety
+### 4. Bot variety
 
 Currently `MatchWorld3D.computeBotReturnChance()` is a single tuned
 value. Better:
@@ -125,16 +162,18 @@ value. Better:
 - Tells: bot pauses or twitches before fakeout serves so a skilled
   player can read it.
 
-## 5. Feedback layer
+### 5. Feedback layer
 
-The simulation is tight; the feedback isn't.
+Some of this is already in (camera shake on bounces + lost lives, FPS
+counter overlay, mute-via-master). Remaining:
 
-- Camera shake on table bounces (cheap, big readability win).
 - Glow trail behind the ball (already have a `glow` procedural texture
   — just wire up trail particles).
 - Centre-hit vs edge-hit SFX variants.
 - Score flash overlay when a point ends.
 - Court ambience under the existing music track.
+- Rebindable controls (the settings screen has the read-only list
+  ready; needs a key-capture mode and `GameSettings` storage).
 
 ## Out of scope (for now)
 

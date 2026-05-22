@@ -13,6 +13,7 @@ import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.utils.Disposable;
 import com.badlogic.gdx.utils.ScreenUtils;
 import com.badlogic.gdx.math.MathUtils;
+import io.github.some_example_name.config.Palette;
 
 /**
  * Buckshot-Roulette-style retro post-process pass.
@@ -42,36 +43,8 @@ public final class RetroPostProcess implements Disposable {
     public static final float DEFAULT_LOW_W = 680f;
     public static final float DEFAULT_LOW_H = 380f;
 
-    /**
-     * 16-color palette matching {@code docs/art-style.md}.  The shader
-     * snaps every pixel to the nearest entry.  Keep this in sync with
-     * {@code config/Palette.java}.
-     */
-    public static final float[] PALETTE_RGB = {
-        // deepest blacks / surface fills
-        0x0A/255f, 0x06/255f, 0x08/255f,
-        0x1A/255f, 0x10/255f, 0x14/255f,
-        // concrete / metal mids
-        0x3B/255f, 0x34/255f, 0x2E/255f,
-        0x4D/255f, 0x40/255f, 0x36/255f,
-        0x6B/255f, 0x5B/255f, 0x4B/255f,
-        // rust / dried-blood reds
-        0x5E/255f, 0x1F/255f, 0x1F/255f,
-        0x7A/255f, 0x2A/255f, 0x2A/255f,
-        0xA0/255f, 0x3B/255f, 0x3B/255f,
-        // sickly greens (felt, paint)
-        0x2E/255f, 0x3B/255f, 0x26/255f,
-        0x4A/255f, 0x5A/255f, 0x3C/255f,
-        0x7B/255f, 0x8C/255f, 0x5A/255f,
-        // dirty whites / creams
-        0xC4/255f, 0xB7/255f, 0x9E/255f,
-        0xE8/255f, 0xDC/255f, 0xC0/255f,
-        // overhead-bulb warms
-        0x8C/255f, 0x5C/255f, 0x36/255f,
-        0xD8/255f, 0x9F/255f, 0x66/255f,
-        // pure black for vignette extremities
-        0.0f, 0.0f, 0.0f
-    };
+    /** Shader palette — built from {@link Palette#toShaderRgb()}. */
+    public static final float[] PALETTE_RGB = Palette.toShaderRgb();
 
     // ── Effect knobs (tweak live during dev) ──────────────────────────────────
 

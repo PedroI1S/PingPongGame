@@ -5,33 +5,19 @@ import com.badlogic.gdx.Input;
 import com.badlogic.gdx.InputAdapter;
 import com.badlogic.gdx.audio.Music;
 import com.badlogic.gdx.audio.Sound;
-import com.badlogic.gdx.graphics.Color;
-import com.badlogic.gdx.graphics.GL20;
-import com.badlogic.gdx.graphics.PerspectiveCamera;
-import com.badlogic.gdx.graphics.VertexAttributes.Usage;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
-import com.badlogic.gdx.graphics.g3d.Environment;
-import com.badlogic.gdx.graphics.g3d.Material;
-import com.badlogic.gdx.graphics.g3d.Model;
-import com.badlogic.gdx.graphics.g3d.ModelBatch;
-import com.badlogic.gdx.graphics.g3d.ModelInstance;
-import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
-import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
-import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
-import com.badlogic.gdx.math.Intersector;
 import com.badlogic.gdx.math.MathUtils;
-import com.badlogic.gdx.math.Vector2;
+import com.badlogic.gdx.math.RandomXS128;
 import com.badlogic.gdx.math.Vector3;
-import com.badlogic.gdx.math.collision.Ray;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Pool;
-import com.badlogic.gdx.utils.ScreenUtils;
 import io.github.some_example_name.Main;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.config.Palette;
 import io.github.some_example_name.core.GameSession;
 import io.github.some_example_name.network.GameConnection;
 import io.github.some_example_name.network.PacketType;
+import io.github.some_example_name.render.MatchArenaRenderer;
 import io.github.some_example_name.world.ImpactParticle3D;
 import io.github.some_example_name.world.MatchWorld3D;
 
@@ -41,176 +27,87 @@ import io.github.some_example_name.world.MatchWorld3D;
  * <p>Both players (P1 and P2) are pure clients.  The authoritative
  * {@link io.github.some_example_name.server.GameServer} runs all physics and
  * broadcasts STATE at ~30 Hz.  This screen only draws, dead-reckons the ball
- * between snapshots, and sends input events (SERVE / HIT) to the server.</p>
- *
- * <h3>Coordinate convention</h3>
- * <p>World coordinates are received as-is from the server (no axis flip).
- * P1's camera sits at +z and P2's camera sits at −z so both look at the
- * same table; the camera perspective naturally handles the left/right mirror.</p>
- *
- * <h3>Active-player encoding</h3>
- * <ul>
- *   <li>{@code activePlayer == 0} — ball in transit, nobody acts</li>
- *   <li>{@code activePlayer == 1} — P1 must serve or return</li>
- *   <li>{@code activePlayer == 2} — P2 must return</li>
- * </ul>
- * Each client checks {@code activePlayer == myPlayerNumber} to decide whether
- * to show the "your turn" prompt and accept click input.
+ * between snapshots, and sends {@link PacketType#CLICK} (screen coordinates) to the server.</p>
  */
 public final class NetMatchScreen extends BaseScreen implements GameConnection.Listener {
 
-    // ── Session state ─────────────────────────────────────────────────────────
-
     private GameConnection conn;
-    private int            playerNumber; // 1 or 2
-
-    // ── Server state (updated on every STATE packet) ───────────────────────────
+    private int            playerNumber;
 
     private final Vector3 snapBallPos  = new Vector3();
     private final Vector3 snapBallVel  = new Vector3();
-    private float   snapAge; // seconds since last STATE arrived
+    private float   snapAge;
     private boolean ballVisible;
-    private int     activePlayer;      // 0/1/2
+    private int     activePlayer;
     private int     p1lives = GameConfig.DEFAULT_LIVES;
     private int     p2lives = GameConfig.DEFAULT_LIVES;
 
-    // ── Dead-reckoned ball ─────────────────────────────────────────────────────
-
     private final Vector3 renderedBallPos = new Vector3();
 
-    // ── Match end ─────────────────────────────────────────────────────────────
-
     private boolean matchOver;
-    private int     winnerPlayer;  // 1 or 2
-
-    // ── Connection ────────────────────────────────────────────────────────────
+    private int     winnerPlayer;
 
     private boolean disconnected;
-    private boolean waitingForOpponent; // server sent WAITING; P2 not yet connected
+    private boolean waitingForOpponent;
 
-    // ── 3D rendering ─────────────────────────────────────────────────────────
-
-    private PerspectiveCamera camera3D;
-    private ModelBatch        modelBatch;
-    private Environment       environment;
-    private Model             tableModel, netModel, ballModel, floorModel;
-    private ModelInstance     tableInstance, netInstance, ballInstance, floorInstance;
-
-    // ── Fixed camera ──────────────────────────────────────────────────────────
-
-    private final Vector3 cameraTarget = new Vector3();
-    private final Vector3 cameraOffset = new Vector3();
-
-    // ── Cursor projection ─────────────────────────────────────────────────────
-
-    private final Vector3 worldToScreen = new Vector3();
-    private final Vector3 screenToWorld = new Vector3();
-    private final Vector2 cursorOnTable = new Vector2();
-
-    // ── Click hit detection ───────────────────────────────────────────────────
-
-    private static final float CLICK_HIT_PADDING = 3.5f;
-    private final Vector3 hitPoint = new Vector3();
-
-    // ── Local particles (cosmetic — spawned on SFX_TABLE events) ─────────────
+    private MatchArenaRenderer arena;
 
     private final Array<ImpactParticle3D> particles = new Array<>();
     private final Pool<ImpactParticle3D> particlePool = new Pool<>() {
         @Override protected ImpactParticle3D newObject() { return new ImpactParticle3D(); }
     };
     private final Vector3 tmpParticleVel = new Vector3();
-
-    // ── Audio ─────────────────────────────────────────────────────────────────
+    private static final int MAX_PARTICLES = 64;
 
     private Sound paddleHitSfx;
     private Sound tableHitSfx;
     private Music backgroundMusic;
 
-    // ── Input ────────────────────────────────────────────────────────────────
-
     private NetInput netInput;
+    private RandomXS128 rng;
 
-    // ── Constructor ───────────────────────────────────────────────────────────
+    // ── Screen shake ──────────────────────────────────────────────────────────
+    /** Seconds remaining on the current shake; 0 when not shaking. */
+    private float shakeTime;
+    /** Initial duration of the current shake (used to decay intensity). */
+    private float shakeDuration;
+    /** Peak offset in world units. */
+    private float shakeAmplitude;
+    /**
+     * Previous-frame lives counters — used to detect when the local player
+     * just lost a life (big shake) versus when the opponent did.
+     */
+    private int prevP1Lives = GameConfig.DEFAULT_LIVES;
+    private int prevP2Lives = GameConfig.DEFAULT_LIVES;
 
     public NetMatchScreen(Main game) { super(game); }
-
-    // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     @Override
     public void show() {
         GameSession session = context.getSession();
         conn         = session.getGameConnection();
         playerNumber = session.getPlayerNumber();
+        rng          = session.getRandom();
 
-        // Redirect live callbacks to this screen.  Cheap, idempotent.
         if (conn != null) conn.setListener(this);
 
-        // Heavy init only on first show().  Re-entering from pause / settings
-        // would otherwise nuke camera state, reset the "waiting for opponent"
-        // banner, and double-greet the server.
-        if (camera3D == null) {
-            boolean isP1 = (playerNumber == 1);
-            cameraTarget.set(0f, MatchWorld3D.TABLE_TOP_Y, 0f);
-            cameraOffset.set(0f, 2.5f, isP1 ? 11f : -11f);
-
-            camera3D = new PerspectiveCamera(60f, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
-            camera3D.near = 0.1f;
-            camera3D.far  = 100f;
-            applyCameraTransform();
-
-            modelBatch  = new ModelBatch();
-            environment = new Environment();
-            environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.45f, 0.5f, 0.55f, 1f));
-            environment.add(new DirectionalLight().set(0.9f, 0.95f, 1f, -0.4f, -0.8f, -0.3f));
-            buildModels();
-
+        if (arena == null) {
+            arena = new MatchArenaRenderer(playerNumber == 1);
             paddleHitSfx = context.getAssets().getBallHitSfx();
             tableHitSfx  = context.getAssets().getTableHitSfx();
-
-            // Banner state — only set on first entry; subsequent shows keep
-            // whatever STATE packets have already taught us.
             waitingForOpponent = true;
-
-            // Greet the server only once per match.
-            if (conn != null) conn.sendHello();
         }
 
+        arena.ensureInitialized();
         backgroundMusic = context.getAssets().getBackgroundMusic();
         backgroundMusic.setLooping(true);
-        backgroundMusic.setVolume(0.25f);
+        // Respect Master × Music settings on (re)entry.  The base 0.25 keeps
+        // the track unobtrusive when the player leaves everything at 100%.
+        backgroundMusic.setVolume(0.25f * context.getSettings().getMusicGain());
         backgroundMusic.play();
 
         netInput = new NetInput();
         Gdx.input.setInputProcessor(netInput);
-    }
-
-    private void buildModels() {
-        ModelBuilder mb    = new ModelBuilder();
-        long         attrs = Usage.Position | Usage.Normal;
-
-        tableModel = mb.createBox(
-            MatchWorld3D.TABLE_HALF_WIDTH * 2f, 0.2f, MatchWorld3D.TABLE_HALF_LENGTH * 2f,
-            new Material(ColorAttribute.createDiffuse(Color.valueOf("1A6E5F"))), attrs);
-        tableInstance = new ModelInstance(tableModel);
-        tableInstance.transform.setToTranslation(0f, MatchWorld3D.TABLE_TOP_Y - 0.1f, 0f);
-
-        netModel = mb.createBox(
-            MatchWorld3D.TABLE_HALF_WIDTH * 2f + 0.6f, MatchWorld3D.NET_HEIGHT, 0.06f,
-            new Material(ColorAttribute.createDiffuse(Color.valueOf("E8C06A"))), attrs);
-        netInstance = new ModelInstance(netModel);
-        netInstance.transform.setToTranslation(
-            0f, MatchWorld3D.TABLE_TOP_Y + MatchWorld3D.NET_HEIGHT * 0.5f, 0f);
-
-        ballModel = mb.createSphere(
-            MatchWorld3D.BALL_RADIUS * 2f, MatchWorld3D.BALL_RADIUS * 2f,
-            MatchWorld3D.BALL_RADIUS * 2f, 16, 16,
-            new Material(ColorAttribute.createDiffuse(Color.valueOf("F4FBFF"))), attrs);
-        ballInstance = new ModelInstance(ballModel);
-
-        floorModel = mb.createBox(60f, 0.4f, 60f,
-            new Material(ColorAttribute.createDiffuse(Color.valueOf("0E2026"))), attrs);
-        floorInstance = new ModelInstance(floorModel);
-        floorInstance.transform.setToTranslation(0f, -0.2f, 0f);
     }
 
     @Override
@@ -222,53 +119,34 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     @Override
     public void resize(int width, int height) {
         super.resize(width, height);
-        if (camera3D != null) {
-            camera3D.viewportWidth  = width;
-            camera3D.viewportHeight = height;
-            camera3D.update();
-        }
+        if (arena != null) arena.resize(width, height);
         context.getPostProcess().resize(width, height);
     }
 
     @Override
     public void dispose() {
-        if (modelBatch  != null) modelBatch.dispose();
-        if (tableModel  != null) tableModel.dispose();
-        if (netModel    != null) netModel.dispose();
-        if (ballModel   != null) ballModel.dispose();
-        if (floorModel  != null) floorModel.dispose();
+        particlePool.freeAll(particles);
+        particles.clear();
+        if (arena != null) arena.dispose();
     }
-
-    // ── Render ────────────────────────────────────────────────────────────────
 
     @Override
     public void render(float delta) {
         if (netInput.consumeMenu()) { game.openPauseMenu(this, this::returnToMenu); return; }
 
         updateSimulation(delta);
-        unprojectCursorOntoTable();
+        updateCameraShake(delta);
+        arena.unprojectCursorOntoTable(netInput.lastMouseX, netInput.lastMouseY);
 
-        // Wrap the whole scene + HUD in the retro post-process pass.
         context.getPostProcess().begin();
+        arena.render3DScene(ballVisible);
 
-        // 3-D pass
-        ScreenUtils.clear(0.02f, 0.05f, 0.07f, 1f, true);
-        Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
-        modelBatch.begin(camera3D);
-        modelBatch.render(floorInstance,  environment);
-        modelBatch.render(tableInstance,  environment);
-        modelBatch.render(netInstance,    environment);
-        if (ballVisible) modelBatch.render(ballInstance, environment);
-        modelBatch.end();
-        Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
-
-        // 2-D HUD pass
         context.getViewport().apply(true);
         SpriteBatch batch = context.getBatch();
         batch.setProjectionMatrix(context.getViewport().getCamera().combined);
         batch.begin();
-        drawParticles(batch);
-        drawCursorMarker(batch);
+        arena.drawCursorMarker(batch, context.getAssets().getProceduralAssets().getAimRing());
+        arena.drawParticles(batch, context.getAssets().getProceduralAssets().getGlow(), particles);
         drawHud(batch);
         if (matchOver)    drawOutcomeOverlay(batch);
         if (disconnected) drawDisconnectOverlay(batch);
@@ -277,76 +155,101 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         context.getPostProcess().endAndBlit();
     }
 
-    // ── Simulation update ─────────────────────────────────────────────────────
-
     private void updateSimulation(float delta) {
         snapAge += delta;
 
-        // Dead-reckon ball position using server snapshot + gravity.
         if (ballVisible) {
             float t  = snapAge;
             float ex = snapBallPos.x + snapBallVel.x * t;
-            float ey = snapBallPos.y + snapBallVel.y * t
-                       - 0.5f * MatchWorld3D.GRAVITY * t * t;
             float ez = snapBallPos.z + snapBallVel.z * t;
-            ey = Math.max(ey, MatchWorld3D.TABLE_TOP_Y + MatchWorld3D.BALL_RADIUS);
+            float ey = extrapolateBallY(snapBallPos.y, snapBallVel.y, t);
             renderedBallPos.set(ex, ey, ez);
-            ballInstance.transform.setToTranslation(ex, ey, ez);
+            arena.setBallPosition(ex, ey, ez);
         }
 
-        // Update local particles.
         for (int i = particles.size - 1; i >= 0; i--) {
             if (particles.get(i).update(delta)) {
                 particlePool.free(particles.removeIndex(i));
             }
         }
 
-        // Process click input.
         if (netInput.consumeClick() && !matchOver && !disconnected) {
             handleClick();
         }
     }
 
-    private void handleClick() {
-        if (activePlayer != playerNumber) return; // not my turn
+    /**
+     * Integrates Y position under gravity with table-bounce reflections.
+     * Mirrors MatchWorld3D physics so the ball looks correct between 30 Hz snapshots.
+     */
+    private static float extrapolateBallY(float y0, float vy0, float t) {
+        final float floor = MatchWorld3D.TABLE_TOP_Y + MatchWorld3D.BALL_RADIUS;
+        final float restitution = 0.7f; // matches MatchWorld3D.BOUNCE_RESTITUTION
+        float y  = y0;
+        float vy = vy0;
+        float remaining = t;
+        while (remaining > 0.001f) {
+            float dt = Math.min(remaining, 0.005f);
+            vy -= MatchWorld3D.GRAVITY * dt;
+            y  += vy * dt;
+            if (y < floor && vy < 0f) {
+                y  = floor;
+                vy = -vy * restitution;
+                if (Math.abs(vy) < 0.5f) vy = 0f;
+            }
+            remaining -= dt;
+        }
+        return y;
+    }
 
-        // Either player can serve when it's their turn and ball is hidden.
-        if (!ballVisible) {
-            if (conn != null) conn.sendServe();
+    /** Decays any active shake and applies the current offset to the camera. */
+    private void updateCameraShake(float delta) {
+        if (arena == null) return;
+        if (shakeTime <= 0f) {
+            arena.setCameraShake(0f, 0f, 0f);
             return;
         }
-
-        // Otherwise, hit the in-flight ball.
-        Ray ray = camera3D.getPickRay(netInput.lastClickX, netInput.lastClickY);
-        tryHit(ray);
+        shakeTime = Math.max(0f, shakeTime - delta);
+        // Quadratic falloff so the first few frames are punchy, the tail is soft.
+        float decay = shakeDuration > 0f ? (shakeTime / shakeDuration) : 0f;
+        float jitter = shakeAmplitude * decay * decay;
+        float dx = (MathUtils.random() - 0.5f) * 2f * jitter;
+        float dy = (MathUtils.random() - 0.5f) * 2f * jitter;
+        arena.setCameraShake(dx, dy, 0f);
     }
 
-    private void tryHit(Ray ray) {
-        float hitRadius = MatchWorld3D.BALL_RADIUS * CLICK_HIT_PADDING;
-        if (!Intersector.intersectRaySphere(ray, renderedBallPos, hitRadius, hitPoint)) return;
-
-        Vector3 offset = hitPoint.cpy().sub(renderedBallPos);
-        float ndx   = MathUtils.clamp(offset.x / hitRadius, -1f, 1f);
-        float ndy   = MathUtils.clamp(offset.y / hitRadius, -1f, 1f);
-        float power = (float) Math.sqrt(ndx * ndx + ndy * ndy);
-
-        // P1 returns toward −z (P2's side); P2 returns toward +z (P1's side).
-        float zDir = (playerNumber == 1) ? -1f : 1f;
-        float vx = ndx  * 3.2f;
-        float vy = 5.0f + ndy * 2.0f;
-        float vz = zDir * (7.5f + power * 2.0f);
-
-        if (conn != null) {
-            conn.sendHit(vx, vy, vz);
-            paddleHitSfx.play(0.7f); // optimistic local sound
-        }
+    private void triggerShake(float duration, float amplitude) {
+        if (!context.getSettings().isScreenShakeEnabled()) return;
+        // Don't shorten an in-progress harder shake.
+        if (amplitude * duration < shakeAmplitude * shakeTime) return;
+        shakeTime      = duration;
+        shakeDuration  = duration;
+        shakeAmplitude = amplitude;
     }
 
-    // ── GameConnection.Listener (GL thread) ───────────────────────────────────
+    private void handleClick() {
+        if (activePlayer != playerNumber) return;
+        if (conn == null) return;
+
+        conn.sendClick(
+            netInput.lastClickX,
+            netInput.lastClickY,
+            Gdx.graphics.getWidth(),
+            Gdx.graphics.getHeight()
+        );
+    }
 
     @Override
     public void onWaiting() {
         waitingForOpponent = true;
+    }
+
+    @Override
+    public void onMatchReady(int matchModeWire) {
+        waitingForOpponent = false;
+        if (matchModeWire == PacketType.MODE_BOT) {
+            context.getSession().setRemoteName("Bot");
+        }
     }
 
     @Override
@@ -360,8 +263,20 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         snapAge      = 0f;
         ballVisible  = visible;
         activePlayer = ap;
-        p1lives      = p1l;
-        p2lives      = p2l;
+
+        // Detect a score event by comparing against the previous snapshot.
+        // Bigger shake when WE lost a life, smaller when the opponent did.
+        int myPrev   = (playerNumber == 1) ? prevP1Lives : prevP2Lives;
+        int myCurr   = (playerNumber == 1) ? p1l         : p2l;
+        int themPrev = (playerNumber == 1) ? prevP2Lives : prevP1Lives;
+        int themCurr = (playerNumber == 1) ? p2l         : p1l;
+        if (myCurr < myPrev)        triggerShake(0.40f, 0.55f);
+        else if (themCurr < themPrev) triggerShake(0.20f, 0.20f);
+
+        p1lives   = p1l;
+        p2lives   = p2l;
+        prevP1Lives = p1l;
+        prevP2Lives = p2l;
     }
 
     @Override
@@ -373,14 +288,19 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     @Override
     public void onSfx(int sfxType) {
         if (sfxType == PacketType.SFX_PADDLE) {
-            paddleHitSfx.play(0.7f);
+            paddleHitSfx.play(getSfxGain() * 0.7f);
         } else if (sfxType == PacketType.SFX_TABLE) {
-            tableHitSfx.play(0.6f);
-            // Spawn cosmetic bounce particles at the ball's current rendered position.
-            if (ballVisible) spawnBounceSparks(renderedBallPos.x,
-                                               renderedBallPos.y,
-                                               renderedBallPos.z);
+            tableHitSfx.play(getSfxGain() * 0.6f);
+            if (ballVisible) {
+                spawnBounceSparks(renderedBallPos.x, renderedBallPos.y, renderedBallPos.z);
+            }
+            triggerShake(0.10f, 0.10f); // tiny chunk on the bounce thud
         }
+    }
+
+    /** Master × SFX volume in [0..1]. */
+    private float getSfxGain() {
+        return context.getSettings().getSfxGain();
     }
 
     @Override
@@ -401,77 +321,24 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         shutdownConn();
     }
 
-    // ── Particles ─────────────────────────────────────────────────────────────
-
     private void spawnBounceSparks(float x, float y, float z) {
-        for (int i = 0; i < 10; i++) {
-            float angle = MathUtils.random(MathUtils.PI2);
-            float speed = 1.2f + MathUtils.random(1.8f);
+        if (particles.size >= MAX_PARTICLES) {
+            return;
+        }
+        int count = Math.min(10, MAX_PARTICLES - particles.size);
+        for (int i = 0; i < count; i++) {
+            float angle = rng.nextFloat() * MathUtils.PI2;
+            float speed = 1.2f + rng.nextFloat() * 1.8f;
             tmpParticleVel.set(MathUtils.cos(angle) * speed,
-                               1.5f + MathUtils.random(1.5f),
+                               1.5f + rng.nextFloat() * 1.5f,
                                MathUtils.sin(angle) * speed);
             ImpactParticle3D p = particlePool.obtain();
-            p.init(x, y, z, tmpParticleVel, 0.35f + MathUtils.random(0.25f));
+            p.init(x, y, z, tmpParticleVel, 0.35f + rng.nextFloat() * 0.25f);
             particles.add(p);
         }
     }
 
-    // ── Camera ────────────────────────────────────────────────────────────────
-
-    private void applyCameraTransform() {
-        camera3D.position.set(cameraTarget).add(cameraOffset);
-        camera3D.lookAt(cameraTarget);
-        camera3D.up.set(0f, 1f, 0f);
-        camera3D.update();
-    }
-
-    private void unprojectCursorOntoTable() {
-        screenToWorld.set(netInput.lastMouseX, netInput.lastMouseY, 0f);
-        camera3D.unproject(screenToWorld);
-        Vector3 origin = camera3D.position;
-        float dirY = screenToWorld.y - origin.y;
-        if (Math.abs(dirY) < 0.0001f) { cursorOnTable.set(Float.NaN, Float.NaN); return; }
-        float t = (MatchWorld3D.TABLE_TOP_Y - origin.y) / dirY;
-        if (t <= 0f) { cursorOnTable.set(Float.NaN, Float.NaN); return; }
-        cursorOnTable.set(
-            origin.x + (screenToWorld.x - origin.x) * t,
-            origin.z + (screenToWorld.z - origin.z) * t);
-    }
-
-    // ── Drawing ───────────────────────────────────────────────────────────────
-
-    private void drawParticles(SpriteBatch batch) {
-        for (ImpactParticle3D p : particles) {
-            worldToScreen.set(p.getPosition());
-            camera3D.project(worldToScreen);
-            if (worldToScreen.z < 0f || worldToScreen.z > 1f) continue;
-            float hudX = worldToScreen.x / Gdx.graphics.getWidth()  * GameConfig.WORLD_WIDTH;
-            float hudY = worldToScreen.y / Gdx.graphics.getHeight() * GameConfig.WORLD_HEIGHT;
-            float alpha = p.getAlpha();
-            float size  = 4f + alpha * 6f;
-            batch.setColor(1f, 1f, 0.85f, alpha * 0.85f);
-            batch.draw(context.getAssets().getProceduralAssets().getGlow(),
-                       hudX - size * 0.5f, hudY - size * 0.5f, size, size);
-        }
-        batch.setColor(Color.WHITE);
-    }
-
-    private void drawCursorMarker(SpriteBatch batch) {
-        if (Float.isNaN(cursorOnTable.x)) return;
-        worldToScreen.set(cursorOnTable.x, MatchWorld3D.TABLE_TOP_Y, cursorOnTable.y);
-        camera3D.project(worldToScreen);
-        if (worldToScreen.z < 0f || worldToScreen.z > 1f) return;
-        float hudX = worldToScreen.x / Gdx.graphics.getWidth()  * GameConfig.WORLD_WIDTH;
-        float hudY = worldToScreen.y / Gdx.graphics.getHeight() * GameConfig.WORLD_HEIGHT;
-        float size = 28f;
-        batch.setColor(0.45f, 0.95f, 0.85f, 0.55f);
-        batch.draw(context.getAssets().getProceduralAssets().getAimRing(),
-                   hudX - size * 0.5f, hudY - size * 0.5f, size, size);
-        batch.setColor(Color.WHITE);
-    }
-
     private void drawHud(SpriteBatch batch) {
-        // "My" lives are always on the left; opponent's on the right.
         int myLives   = (playerNumber == 1) ? p1lives : p2lives;
         int oppLives  = (playerNumber == 1) ? p2lives : p1lives;
         String oppName = context.getSession().getRemoteName();
@@ -481,6 +348,14 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             GameConfig.HUD_PADDING, 680f);
         context.getBodyFont().draw(batch, oppName + "  " + oppLives,
             GameConfig.WORLD_WIDTH - 260f, 680f);
+
+        // Optional FPS overlay — settings → GAME tab.
+        if (context.getSettings().isShowFpsCounter()) {
+            context.getBodyFont().setColor(Palette.TEXT_DIM);
+            context.getBodyFont().draw(batch,
+                "FPS " + Gdx.graphics.getFramesPerSecond(),
+                GameConfig.HUD_PADDING, 644f);
+        }
 
         if (!matchOver && !disconnected) {
             drawCentered(batch, context.getBodyFont(), deriveStatus(),
@@ -520,8 +395,6 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             GameConfig.WORLD_WIDTH * 0.5f, 372f, Palette.TEXT_DIM);
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
     private void returnToMenu() {
         if (conn != null) conn.sendBye();
         shutdownConn();
@@ -536,8 +409,6 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         if (conn != null) { conn.close(); conn = null; }
         context.getSession().clearMultiplayer();
     }
-
-    // ── Input ────────────────────────────────────────────────────────────────
 
     private static final class NetInput extends InputAdapter {
         int lastClickX, lastClickY, lastMouseX, lastMouseY;

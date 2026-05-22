@@ -83,7 +83,7 @@ public final class MenuScreen extends BaseScreen {
         for (Button b : buttons) b.updateHover(cursorWorld.x, cursorWorld.y);
 
         // Menus render straight to the back buffer.  The retro post-process
-        // is applied only inside MatchScreen3D / NetMatchScreen so the menu
+        // is applied only inside NetMatchScreen so the menu
         // text never gets crushed by palette quantization.
         beginFrame(Palette.BG.r, Palette.BG.g, Palette.BG.b);
         SpriteBatch      batch   = context.getBatch();

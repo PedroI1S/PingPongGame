@@ -2,10 +2,14 @@ package io.github.some_example_name;
 
 import com.badlogic.gdx.Game;
 import com.badlogic.gdx.Screen;
+import io.github.some_example_name.client.InProcessServer;
+import io.github.some_example_name.client.LocalServerProcess;
+import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.core.GameContext;
+import io.github.some_example_name.network.PacketType;
 import io.github.some_example_name.screen.ConfigScreen;
 import io.github.some_example_name.screen.LoadingScreen;
-import io.github.some_example_name.screen.MatchScreen3D;
+import io.github.some_example_name.screen.MatchConnectScreen;
 import io.github.some_example_name.screen.MenuScreen;
 import io.github.some_example_name.screen.PauseMenuScreen;
 import io.github.some_example_name.screen.MultiplayerLobbyScreen;
@@ -18,6 +22,8 @@ import io.github.some_example_name.screen.NetMatchScreen;
  */
 public class Main extends Game {
     private GameContext context;
+    private LocalServerProcess serverProcess;
+    private InProcessServer    inProcessServer;
 
     @Override
     public void create() {
@@ -30,7 +36,59 @@ public class Main extends Game {
         context.getAssets().queueCoreAssets();
         context.getSettings().applyWindowMode();
         context.applySettings();
+        autoLaunchServer();
         setScreen(new LoadingScreen(this));
+    }
+
+    /**
+     * Starts the game server on a background thread so it runs concurrently with
+     * the LoadingScreen asset pass.
+     *
+     * <p>Strategy (first success wins):</p>
+     * <ol>
+     *   <li><strong>External server</strong> — if {@code PINGPONG_SERVER_HOST} points
+     *       somewhere other than localhost, skip local launch entirely.</li>
+     *   <li><strong>Subprocess</strong> ({@link LocalServerProcess}) — forks the fat jar
+     *       when it exists.  Binds {@code 0.0.0.0} so LAN guests can reach it.</li>
+     *   <li><strong>In-process</strong> ({@link InProcessServer}) — fallback when the jar
+     *       hasn't been built yet (e.g. {@code ./gradlew :lwjgl3:run} during development).
+     *       No fat jar needed; starts in &lt;10 ms.</li>
+     * </ol>
+     *
+     * <p>If port 7777 is already occupied the in-process bind will fail too, and the
+     * player's first VS BOT / HOST attempt will show a connection-error screen.</p>
+     */
+    private void autoLaunchServer() {
+        String host = GameConfig.resolveServerHost();
+        if (!"127.0.0.1".equals(host) && !"localhost".equals(host)) {
+            System.out.println("[Main] External server configured (" + host + ") — skipping local launch.");
+            return;
+        }
+
+        Thread t = new Thread(() -> {
+            // 1. Try subprocess (needs a pre-built fat jar).
+            LocalServerProcess proc = new LocalServerProcess();
+            boolean ok = proc.start(null, "0.0.0.0", PacketType.PORT, 8000);
+            if (ok) {
+                synchronized (Main.this) { serverProcess = proc; }
+                System.out.println("[Main] Dedicated server subprocess is ready.");
+                return;
+            }
+
+            // 2. Fall back to in-process server (always available, no jar needed).
+            System.out.println("[Main] Subprocess unavailable — starting in-process server.");
+            InProcessServer inProc = new InProcessServer();
+            boolean started = inProc.start(PacketType.PORT, "0.0.0.0", 5000);
+            if (started) {
+                synchronized (Main.this) { inProcessServer = inProc; }
+                System.out.println("[Main] In-process server is ready.");
+            } else {
+                System.out.println("[Main] Server startup failed (port in use?). "
+                    + "VS BOT / HOST will show a connection error.");
+            }
+        }, "server-auto-launch");
+        t.setDaemon(true);
+        t.start();
     }
 
     public GameContext getContext() {
@@ -57,9 +115,9 @@ public class Main extends Game {
         setScreen(new NetMatchScreen(this));
     }
 
-    /** Single-player vs the local bot — no pre-match loadout. */
+    /** VS BOT — connects to the dedicated server, then transitions to {@link NetMatchScreen}. */
     public void openMatch() {
-        setScreen(new MatchScreen3D(this));
+        setScreen(new MatchConnectScreen(this, MatchConnectScreen.Kind.BOT, "127.0.0.1"));
     }
 
     public void openPauseMenu(Screen resumeScreen, Runnable quitAction) {
@@ -68,9 +126,22 @@ public class Main extends Game {
 
     @Override
     public void dispose() {
+        if (context != null) {
+            context.getSession().clearMultiplayer();
+        }
         super.dispose();
         if (context != null) {
             context.dispose();
+        }
+        synchronized (this) {
+            if (serverProcess != null) {
+                serverProcess.stop();
+                serverProcess = null;
+            }
+            if (inProcessServer != null) {
+                inProcessServer.stop();
+                inProcessServer = null;
+            }
         }
     }
 }
