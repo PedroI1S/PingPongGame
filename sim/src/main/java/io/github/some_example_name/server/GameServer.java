@@ -167,6 +167,12 @@ public final class GameServer {
             Phase curPhase = w.getPhase();
             if (prevPhase != Phase.ITEM_PHASE && curPhase == Phase.ITEM_PHASE) {
                 broadcastItemDealt(w);
+                if (mode == MatchMode.BOT) {
+                    long botReadyAt = System.nanoTime() + 500_000_000L;
+                    actions.offer(() -> {
+                        if (System.nanoTime() >= botReadyAt) w.playerReady(2);
+                    });
+                }
             }
             prevPhase = curPhase;
 
@@ -360,6 +366,22 @@ public final class GameServer {
                 if (playerNumber == 1) w.tryPlayerServe();
                 else w.tryClientServe();
             });
+        }
+
+        @Override
+        public void onUseItem(int itemId) {
+            MatchWorld3D w = world;
+            if (w == null || !matchRunning) return;
+            ItemType item = ItemType.fromId((byte) itemId);
+            if (item == null) return;
+            actions.offer(() -> w.applyItem(playerNumber, item));
+        }
+
+        @Override
+        public void onItemReady() {
+            MatchWorld3D w = world;
+            if (w == null || !matchRunning) return;
+            actions.offer(() -> w.playerReady(playerNumber));
         }
 
         @Override
