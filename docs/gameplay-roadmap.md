@@ -1,144 +1,144 @@
 # Gameplay Roadmap
 
-## Current Translation Of The Idea
+## What the game is right now
 
-The concept now being followed is:
+A 3D first-person ping-pong duel. You stand at one end of the table.
+Balls come at you. You click the ball with your mouse to return it.
+First to drain the other side's lives wins.
 
-- a ping-pong duel from the player point of view
-- a ball that visually comes toward the player
-- quick aim-lab-like clicking to return it
-- a bot opponent that also has lives and modifiers
+Two modes:
 
-The current 2D version fakes depth with ball growth instead of full 3D movement.
+- **Single-player** — vs a bot that runs in `MatchWorld3D` locally.
+- **LAN multiplayer** — one player hosts (game spins up an embedded
+  server in-process), the other joins by typing a 7-character room
+  code.
 
-## What Was Implemented Now
+## Current loop
 
-### Core loop
+1. Whoever scored last serves the next ball.
+2. Ball flies across the net toward the receiver.
+3. Receiver clicks the ball before it goes past their end of the table.
+4. Hit point on the ball maps to lateral spin + lift + power.
+5. Ball returns; if it clears the net and lands on the other side, it's
+   a legal return.
+6. Otherwise (net, out of bounds, double bounce, missed click) the
+   receiver loses a life.
+7. Repeat until one side hits zero lives.
 
-The current loop is:
+## What's already in
 
-- choose one pre-match modifier
-- wait for the bot to send an incoming shot
-- click the ball before impact
-- let the bot answer or fail
-- keep trading lives until one side is out
+### Click → return mapping
 
-### Ball presentation
+The hit point relative to the ball center drives:
 
-The ball currently communicates approach through:
+- horizontal spin (`vx = ndx * 3.2f`)
+- lift (`vy = 5 + ndy * 2`)
+- forward velocity scales with how far from center the click landed
+  (more power, but easier to send out of bounds)
 
-- increasing size
-- timed pressure
-- a player-facing playfield layout
+### Camera / scene
 
-It now also supports the return path:
+3D scene built from `ModelBuilder` primitives — table, net, ball,
+floor as box / sphere geometry with diffuse colors and a directional
+light. No model files needed. P1's camera sits at +z, P2's at −z; the
+perspective handles the left/right mirror automatically.
 
-- incoming animation: far to near (growing)
-- outgoing animation: near to far (shrinking)
+### Networking
 
-The current visual pass intentionally removed the blue helper trail and reduced the white aura strength to keep focus on timing/click readability.
+- Server-authoritative: physics runs on the host's embedded
+  `GameServer`, both clients are pure drawing + input
+- Binary protocol over TCP, STATE broadcast at 30 Hz
+- Client-side dead-reckoning between snapshots using gravity
 
-### Table presentation
+### Loser-serves rule
 
-The table now runs as a sprite-sheet animation workflow:
+`MatchWorld3D` tracks who lost the last point and prepares the serve
+for the other side.
 
-- normal looping frames while idle
-- reverse playback before a bot shot reaches the player
-- freeze on frame 0 during player reaction
-- resume looping only after the player return animation finishes
+## Best next gameplay steps
 
-The rendering keeps frame aspect ratio, which is important when using 128x128 table frames.
+### Step 1 — In-match item pickups
 
-This is intentionally simple, because it proves the interaction before extra complexity is added.
+The pre-match loadout system was removed. Items will come back as
+**pickups during play**:
 
-### Bot structure
+- Items spawn on the table at random intervals.
+- The player whose side they spawn on can sweep over them with a click
+  to pick up.
+- A picked-up item slots into a per-player effect stack: bigger click
+  zone for next return, slow-mo for next incoming, extra life, etc.
+- Items are visible to both players (no hidden bot pick).
 
-The bot is not rendered as a full mirrored player yet.
+This keeps items from being a "one-time pick before the match starts"
+choice and turns them into a constant in-match decision: do I focus on
+the ball, or break tempo to grab the powerup?
 
-Instead, the bot is resolved through:
+### Step 2 — Online multiplayer
 
-- hidden item modifier
-- return chance logic
-- life loss when it fails to answer
+Today's networking is LAN-only because the room code is the host's
+local IPv4. Going to the internet means:
 
-That keeps the duel structure while letting the reaction mechanic stay center stage.
+- NAT traversal (most home users are behind a router).
+- A way for friends to find each other without typing IPs.
 
-### Item structure
+The realistic path is Steam — `SteamNetworkingSockets` for transport
+and Steam Lobbies for friend invites. The wire format and the
+server-authoritative architecture stay the same. Only `GameConnection`
+is rewritten as a thin wrapper over Steam's API.
 
-The current passive item system already supports this new loop.
+See `docs/plan.md` for the full breakdown.
 
-Items now affect things like:
+### Step 3 — Latency polish
 
-- lives
-- click target size
-- reaction time window
-- return pressure
-- match tempo ramp
+Once the game runs over the internet, the current client behaviour
+(extrapolate from the last STATE) starts to look jittery. Fixes:
 
-## Best Next Gameplay Steps
+- **Interpolate, don't extrapolate.** Buffer ~100 ms of state and
+  render the past — smooth and accurate, slightly delayed.
+- **Client-side prediction for your own hit.** Show the return
+  immediately on click; reconcile if the server rejects it.
+- **Server-side validation of HIT.** Server clamps the velocity into a
+  plausible range, rejects hits when the ball isn't in the legal click
+  zone. Defeats trivial cheating.
 
-### Step 1. Improve the feeling of depth
+### Step 4 — Bot variety
 
-If the click loop feels right, the best next jump is better approach feedback:
+Currently the bot is a single AI tuned by a base return-chance
+constant. Better bots feel like opponents, not sliders:
 
-- moving the ball slightly along a trajectory
-- stronger glow and shadow
-- impact flashes near the camera
-- screen shake on late returns
+- Recognizable shot types: fast straight, slow fakeout, cross-court,
+  wide angle.
+- Difficulty profiles (reaction time, return chance, shot variety) so
+  Easy / Hard feel different beyond just numbers.
+- Tells / fakeouts so the bot has rhythm a player can learn to read.
 
-### Step 2. Add readable serve patterns
+### Step 5 — Feedback layer
 
-To make the bot feel less abstract, give it recognizable shot types:
+The simulation is tight; the feedback isn't yet. Things that would
+sell hits and misses harder:
 
-- fast straight shots
-- slow fakeout shots
-- wide-angle shots
-- repeated pattern bursts
+- Camera shake on table bounce
+- Glow / smear trail behind the ball
+- Hit-specific SFX (clean centre vs glancing edge)
+- Score-flash overlay when a point ends
+- Crowd ambience or court reverb on the music
 
-### Step 3. Add active items
+## Suggested future systems
 
-Once the passive system feels good, move toward real decisions:
+- `ServePattern` — declarative bot serve recipes
+- `ItemSpawner` — picks up locations and triggers in-match items
+- `EffectStack` — per-player active modifiers with timeouts
+- `MatchEventBus` — `PaddleHit`, `TableBounce`, `PointScored`,
+  `MatchOver` so audio, particles, and HUD don't poll
+- `DifficultyProfile` — JSON tuning for bot reaction window, return
+  chance, shot variety
+- `PostMatchSummary` — round-by-round stats screen
 
-- emergency heal
-- one-shot slow motion
-- oversized click window for one ball
-- a forced hard-to-read return against the bot
+## Design rule of thumb
 
-### Step 4. Tune difficulty like an aim trainer
+The game is one sentence:
 
-The best direction is not just "faster."
+> A ping-pong ball comes at you, and you must click it in time.
 
-Tune through:
-
-- reaction window size
-- spawn spread
-- shot rhythm
-- visual noise
-- bot consistency
-
-### Step 5. Add richer duel pacing
-
-To bring back more of the Buckshot Roulette tension, add phases like:
-
-- loadout reveal
-- bot tell or bluff
-- short rally burst
-- point resolution
-
-## Suggested Future Systems
-
-- `ServePattern`
-- `ShotSpawner`
-- `ActiveItemController`
-- `ShotEventBus`
-- `DifficultyProfile`
-- `PostMatchSummary`
-
-## Design Advice
-
-The strongest next move is to keep the game focused on one sentence:
-
-"A ping-pong ball comes at you, and you must click it in time."
-
-If every future feature makes that sentence feel sharper, it belongs.
-
+Every new feature should make that sentence feel sharper. If a feature
+doesn't, it shouldn't ship.

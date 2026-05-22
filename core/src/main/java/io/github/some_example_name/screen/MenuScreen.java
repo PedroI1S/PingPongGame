@@ -1,147 +1,198 @@
 package io.github.some_example_name.screen;
 
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.Input;
+import com.badlogic.gdx.InputAdapter;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import com.badlogic.gdx.math.Vector3;
 import io.github.some_example_name.Main;
 import io.github.some_example_name.assets.ProceduralAssets;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.config.Palette;
-import io.github.some_example_name.input.MenuInputProcessor;
 import io.github.some_example_name.model.MatchOutcome;
 
+import java.util.Arrays;
+import java.util.List;
+
+/**
+ * Entry-screen menu, redone for the Buckshot-Roulette-style bunker look.
+ *
+ * <p>Two clickable buttons stacked centre-screen: VS BOT and MULTIPLAYER.
+ * Keyboard shortcuts (ENTER / SPACE / M) still work as fallbacks.</p>
+ */
 public final class MenuScreen extends BaseScreen {
-    private final MenuInputProcessor inputProcessor;
+
+    private final InputHandler input = new InputHandler();
+    private final Vector3 cursorWorld = new Vector3();
     private float clock;
-    private float entered;
+
+    private final Button vsBotBtn;
+    private final Button multiplayerBtn;
+    private final Button configBtn;
+    private final List<Button> buttons;
 
     public MenuScreen(Main game) {
         super(game);
-        this.inputProcessor = new MenuInputProcessor(game::openMatch, game::openMultiplayerLobby);
+        float cx = GameConfig.WORLD_WIDTH * 0.5f;
+
+        // Layout (y-axis):
+        //   620  "=== AIM ROULETTE ==="
+        //   560  big PONG title
+        //   470  one-line tagline
+        //   ─── breathing room ───
+        //   320..420  the two action buttons (VS BOT / MULTIPLAYER), 100 tall
+        //   295   single-line caption explaining the buttons
+        //   ─── breathing room ───
+        //   200..256  CONFIGURATION button, 56 tall
+        // No second caption was needed — the CONFIGURATION button labels itself.
+        vsBotBtn = new Button(
+            cx - 220f, 320f, 200f, 100f,
+            "[ VS BOT ]", Palette.RED, game::openMatch);
+        multiplayerBtn = new Button(
+            cx +  20f, 320f, 200f, 100f,
+            "[ MULTIPLAYER ]", Palette.WARM, game::openMultiplayerLobby);
+        configBtn = new Button(
+            cx - 100f, 200f, 200f, 56f,
+            "CONFIGURATION", Palette.TEXT_DIM, game::openConfig);
+
+        buttons = Arrays.asList(vsBotBtn, multiplayerBtn, configBtn);
     }
 
-    @Override public void show() { Gdx.input.setInputProcessor(inputProcessor); entered = 0f; }
-    @Override public void hide() { Gdx.input.setInputProcessor(null); }
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    @Override
+    public void show() {
+        Gdx.input.setInputProcessor(input);
+        clock = 0f;
+    }
+
+    @Override
+    public void hide() {
+        Gdx.input.setInputProcessor(null);
+    }
+
+    // ── Render ────────────────────────────────────────────────────────────────
 
     @Override
     public void render(float delta) {
-        clock   += delta;
-        entered += delta;
+        clock += delta;
+        updateCursorWorld();
+        for (Button b : buttons) b.updateHover(cursorWorld.x, cursorWorld.y);
 
+        // Menus render straight to the back buffer.  The retro post-process
+        // is applied only inside NetMatchScreen so the menu
+        // text never gets crushed by palette quantization.
         beginFrame(Palette.BG.r, Palette.BG.g, Palette.BG.b);
-        SpriteBatch batch = context.getBatch();
+        SpriteBatch      batch   = context.getBatch();
         ProceduralAssets visuals = context.getAssets().getProceduralAssets();
-        Texture pixel = visuals.getPixel();
-        BitmapFont title = context.getTitleFont();
-        BitmapFont body  = context.getBodyFont();
+        Texture          pixel   = visuals.getPixel();
+        BitmapFont       title   = context.getTitleFont();
+        BitmapFont       body    = context.getBodyFont();
 
         batch.begin();
-
-        // Layered backdrop: gradient → red grid → moving scanline → static scanlines → grain.
         batch.setColor(Color.WHITE);
-        batch.draw(visuals.getBackground(), 0f, 0f, GameConfig.WORLD_WIDTH, GameConfig.WORLD_HEIGHT);
-        UIDraw.redGrid(batch, pixel, 0.04f);
-        UIDraw.scanlines(batch, pixel);
-        UIDraw.movingScanline(batch, pixel, clock, 6f);
-        UIDraw.filmGrain(batch, visuals.getNoise(), clock, 0.05f);
+        UIDraw.fill(batch, pixel, Palette.BG, 0f, 0f,
+            GameConfig.WORLD_WIDTH, GameConfig.WORLD_HEIGHT);
         UIDraw.cornerMarks(batch, pixel, 24f);
 
-        // Top / bottom system bars
-        boolean blink = ((int) (clock * 1.4f)) % 2 == 0;
         UIDraw.topBar(batch, pixel, body, context.getGlyphLayout(),
-            "SYS://ARP.EXE -- BUILD 0.1.0",
-            (blink ? "* " : "  ") + "LIVE",
-            Palette.RED);
-
-        MatchOutcome lastOutcome = context.getSession().getLastOutcome();
-        String bottomRight = null;
-        Color  bottomRightColor = Palette.TEXT_DIM;
-        if (lastOutcome == MatchOutcome.PLAYER_WIN) { bottomRight = "LAST DUEL: VICTORY"; bottomRightColor = Palette.GREEN; }
-        else if (lastOutcome == MatchOutcome.BOT_WIN) { bottomRight = "LAST DUEL: DEFEAT"; bottomRightColor = Palette.RED; }
+            "ARP // BOOT 0.1.0", "STATUS: LIVE", Palette.WARM);
         UIDraw.bottomBar(batch, pixel, body, context.getGlyphLayout(),
-            "PRESS ENTER OR CLICK TO BEGIN", bottomRight, bottomRightColor);
+            "CLICK A BUTTON  --  OR PRESS  ENTER / M / C",
+            lastOutcomeText(), lastOutcomeColor());
 
-        // ── Centered stack with entrance animations ──────────────────────
         float cx = GameConfig.WORLD_WIDTH * 0.5f;
 
-        // Eyebrow — slide down from above
-        float eyebrowP = UIDraw.entranceProgress(entered, 0f, 0.5f);
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "===  AIM ROULETTE  ===",
-            cx, 600f - UIDraw.slideDown(eyebrowP), Palette.RED);
+            "===  AIM ROULETTE  ===", cx, 620f, Palette.RED);
 
-        // Glitch PONG title — slide down (delay 0.1s)
-        float titleP = UIDraw.entranceProgress(entered, 0.1f, 0.5f);
-        UIDraw.glitchTitle(batch, title, context.getGlyphLayout(),
-            "PONG", cx, 540f - UIDraw.slideDown(titleP), 5.0f, clock);
+        title.getData().setScale(5.0f);
+        UIDraw.centered(batch, title, context.getGlyphLayout(),
+            "PONG", cx, 560f, Palette.TEXT);
+        title.getData().setScale(2.2f);
 
-        // Red gradient line — slide up (delay 0.2s)
-        float lineP = UIDraw.entranceProgress(entered, 0.2f, 0.5f);
-        drawRedGradientLine(batch, pixel, cx, 358f + UIDraw.slideUp(lineP), 360f);
-
-        // Tagline — slide up (delay 0.25s)
-        float taglineP = UIDraw.entranceProgress(entered, 0.25f, 0.5f);
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "AIM-TRAINER REACTION CLICKS.   ROULETTE-STYLE DUEL STRUCTURE.",
-            cx, 332f + UIDraw.slideUp(taglineP), Color.valueOf("888888"));
+            "REACTION CLICKS.  BUNKER TABLE.  ONE OF YOU LEAVES.",
+            cx, 470f, Palette.TEXT_DIM);
 
-        // Log panel — slide up (delay 0.35s)
-        float panelP = UIDraw.entranceProgress(entered, 0.35f, 0.5f);
-        float panelOffset = UIDraw.slideUp(panelP);
-        float panelX = cx - 380f;
-        float panelY = 200f + panelOffset;
-        float panelW = 760f;
-        float panelH = 156f;
-        UIDraw.redLeftPanel(batch, pixel, panelX, panelY, panelW, panelH);
+        for (Button b : buttons) b.draw(batch, pixel, body, context.getGlyphLayout());
 
-        String[] logLines = {
-            "> SCREEN FLOW   : loading -> menu -> match",
-            "> INPUT SYSTEM  : mouse aim, click to return, ESC menu",
-            "> DUEL ENGINE   : incoming ball, react, bot answers",
-            "> LIVES         : [#][#][#][#][#]   default 5 per side",
-            "> SCORING       : whoever scores serves the next point",
-        };
-        for (int i = 0; i < logLines.length; i++) {
-            float lineP_ = UIDraw.entranceProgress(entered, 0.4f + i * 0.06f, 0.4f);
-            body.setColor(Palette.TEXT_DIM.r, Palette.TEXT_DIM.g, Palette.TEXT_DIM.b, lineP_);
-            body.draw(batch, logLines[i],
-                panelX + 20f, panelY + 134f - i * 24f + UIDraw.slideUp(lineP_));
+        // Single caption row sits below both action buttons (which end at
+        // y = 320) and above the CONFIGURATION button (top at y = 256).
+        UIDraw.centered(batch, body, context.getGlyphLayout(),
+            "VS BOT — RUN A LOCAL DUEL.    MULTIPLAYER — HOST OR JOIN A LAN MATCH.",
+            cx, 295f, Palette.TEXT_DIM);
+
+        // Pulsing live-dot in the bulb-warm corner of the top bar.
+        boolean blink = ((int)(clock * 1.4f)) % 2 == 0;
+        if (blink) {
+            UIDraw.fill(batch, pixel, Palette.WARM, 0.85f,
+                GameConfig.WORLD_WIDTH - 56f, GameConfig.WORLD_HEIGHT - 24f, 6f, 6f);
         }
-
-        // CTA — slide up (delay 0.7s)
-        float ctaP = UIDraw.entranceProgress(entered, 0.7f, 0.5f);
-        float ctaOffset = UIDraw.slideUp(ctaP);
-        drawDangerButton(batch, pixel, body, "ENTER THE DUEL", cx, 130f + ctaOffset);
-
-        // Ghost "M = LAN MULTIPLAYER" line below the CTA
-        float ghostP = UIDraw.entranceProgress(entered, 0.8f, 0.4f);
-        body.setColor(Palette.TEXT_DIM.r, Palette.TEXT_DIM.g, Palette.TEXT_DIM.b, ghostP);
-        UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "> M  LAN MULTIPLAYER", cx, 96f + UIDraw.slideUp(ghostP), Palette.TEXT_DIM);
 
         batch.end();
     }
 
-    private void drawRedGradientLine(SpriteBatch batch, Texture pixel, float cx, float y, float width) {
-        int segments = 24;
-        float segW = width / segments;
-        for (int i = 0; i < segments; i++) {
-            float t = (i + 0.5f) / segments;
-            float fade = 1f - Math.abs(t - 0.5f) * 2f;
-            batch.setColor(Palette.RED.r, Palette.RED.g, Palette.RED.b, fade * 0.75f);
-            batch.draw(pixel, cx - width * 0.5f + i * segW, y, segW, 2f);
-        }
-        batch.setColor(Color.WHITE);
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private void updateCursorWorld() {
+        cursorWorld.set(Gdx.input.getX(), Gdx.input.getY(), 0f);
+        context.getViewport().unproject(cursorWorld);
     }
 
-    private void drawDangerButton(SpriteBatch batch, Texture pixel, BitmapFont font,
-                                  String text, float centerX, float y) {
-        float w = 360f, h = 52f;
-        float x = centerX - w * 0.5f;
-        UIDraw.fill(batch, pixel, Palette.RED, 0.08f, x, y, w, h);
-        UIDraw.border(batch, pixel, Palette.RED, x, y, w, h, 2f);
-        UIDraw.centered(batch, font, context.getGlyphLayout(), text, centerX, y + 32f, Palette.RED);
+    private String lastOutcomeText() {
+        MatchOutcome o = context.getSession().getLastOutcome();
+        return switch (o) {
+            case PLAYER_WIN -> "LAST DUEL: VICTORY";
+            case BOT_WIN    -> "LAST DUEL: DEFEAT";
+            default         -> "NO DUEL ON RECORD";
+        };
+    }
+
+    private Color lastOutcomeColor() {
+        MatchOutcome o = context.getSession().getLastOutcome();
+        return switch (o) {
+            case PLAYER_WIN -> Palette.GREEN;
+            case BOT_WIN    -> Palette.RED;
+            default         -> Palette.TEXT_DIM;
+        };
+    }
+
+    @Override
+    public void resize(int width, int height) {
+        super.resize(width, height);
+    }
+
+    // ── Input ─────────────────────────────────────────────────────────────────
+
+    private final class InputHandler extends InputAdapter {
+        @Override
+        public boolean keyDown(int keycode) {
+            if (keycode == Input.Keys.ENTER || keycode == Input.Keys.SPACE) {
+                game.openMatch();
+                return true;
+            }
+            if (keycode == Input.Keys.M) {
+                game.openMultiplayerLobby();
+                return true;
+            }
+            if (keycode == Input.Keys.C) {
+                game.openConfig();
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public boolean touchDown(int sx, int sy, int pointer, int btn) {
+            updateCursorWorld();
+            for (Button b : buttons) {
+                if (b.tryClick(cursorWorld.x, cursorWorld.y)) return true;
+            }
+            return false;
+        }
     }
 }

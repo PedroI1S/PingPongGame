@@ -1,6 +1,5 @@
 package io.github.some_example_name.world;
 
-import com.badlogic.gdx.math.Intersector;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.RandomXS128;
 import com.badlogic.gdx.math.Vector3;
@@ -10,6 +9,7 @@ import com.badlogic.gdx.utils.Pool;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.model.ArenaSide;
 import io.github.some_example_name.model.MatchConfig;
+import io.github.some_example_name.model.MatchMode;
 import io.github.some_example_name.model.MatchOutcome;
 
 /**
@@ -30,12 +30,14 @@ public final class MatchWorld3D {
     public static final float BALL_RADIUS       = 0.18f;
     public static final float GRAVITY           = 9.8f;
 
-    private static final float CLICK_HIT_PADDING  = 3.5f;
     private static final float BOUNCE_RESTITUTION = 0.7f;
+    private static final int MAX_PARTICLES = 64;
+
+    private final Vector3 sanitizedVel = new Vector3();
 
     public enum Phase { PREPARE_SERVE, INCOMING, OUTGOING, BOT_RESOLVE }
 
-    private boolean networkMode;
+    private MatchMode matchMode = MatchMode.BOT;
 
     private final MatchConfig config;
     private final RandomXS128 random;
@@ -82,7 +84,11 @@ public final class MatchWorld3D {
         player = new DuelistState(ArenaSide.PLAYER, "You", config.getFighter(ArenaSide.PLAYER));
         bot    = new DuelistState(ArenaSide.BOT,    "Bot", config.getFighter(ArenaSide.BOT));
         currentApproachDuration = config.getInitialApproachDuration();
-        prepareServe(GameConfig.OPENING_DELAY, "Bot is preparing the opening shot.");
+        // Sensible default — overwritten by setMatchMode() which the server
+        // calls before the first tick.  Keeps single-player feeling natural
+        // if the world is ever constructed outside a server.
+        nextServer = 2;
+        prepareServe(GameConfig.OPENING_DELAY, "Match starting...");
     }
 
     // ── update ────────────────────────────────────────────────────────────────
@@ -107,7 +113,10 @@ public final class MatchWorld3D {
     }
 
     private void spawnBounceSparks(float x, float y, float z) {
-        int count = 8 + random.nextInt(4);
+        if (particles.size >= MAX_PARTICLES) {
+            return;
+        }
+        int count = Math.min(8 + random.nextInt(4), MAX_PARTICLES - particles.size);
         for (int i = 0; i < count; i++) {
             float angle = random.nextFloat() * MathUtils.PI2;
             float speed = 1.2f + random.nextFloat() * 1.8f;
@@ -121,10 +130,9 @@ public final class MatchWorld3D {
     }
 
     private void updatePrepareServe(float delta) {
-        // In network mode both players click to serve — no auto-serve.
-        if (networkMode) return;
-        // Single-player: only the bot auto-serves on a timer.  The human
-        // player must click to send their serve via {@link #tryPlayerServe()}.
+        // PVP: humans click to serve; no server-side auto-serve.
+        if (matchMode == MatchMode.PVP) return;
+        // BOT: server bot auto-serves on a timer when it is P2's turn.
         if (nextServer != 2) return;
         phaseTimer -= delta;
         if (phaseTimer > 0f) return;
@@ -220,7 +228,9 @@ public final class MatchWorld3D {
                 tableBounceEvent = true;
                 spawnBounceSparks(ballPos.x, TABLE_TOP_Y, ballPos.z);
                 phase = Phase.BOT_RESOLVE;
-                phaseTimer = networkMode ? GameConfig.NET_CLIENT_MISS_TIMEOUT : GameConfig.BOT_RESPONSE_DELAY;
+                phaseTimer = matchMode == MatchMode.PVP
+                    ? GameConfig.NET_CLIENT_MISS_TIMEOUT
+                    : GameConfig.BOT_RESPONSE_DELAY;
                 statusText = "Clean return. Bot is trying to answer.";
             } else {
                 handlePlayerFault("Out of bounds! Try a more centred shot.");
@@ -255,7 +265,7 @@ public final class MatchWorld3D {
         phaseTimer -= delta;
         if (phaseTimer > 0f) return;
 
-        if (networkMode) {
+        if (matchMode == MatchMode.PVP) {
             clientMiss();
             return;
         }
@@ -280,10 +290,26 @@ public final class MatchWorld3D {
         }
     }
 
-    // ── network-mode API ─────────────────────────────────────────────────────
+    // ── server match API ──────────────────────────────────────────────────────
 
-    public void setNetworkMode(boolean nm) {
-        networkMode = nm;
+    public void setMatchMode(MatchMode mode) {
+        matchMode = mode;
+        // Pick a serve policy that matches the mode.  Must be called before
+        // the first {@link #update} — once a phase advances past
+        // PREPARE_SERVE this is a no-op.
+        if (phase == Phase.PREPARE_SERVE) {
+            if (mode == MatchMode.PVP) {
+                nextServer = 1;
+                statusText = "Match starting. P1 to serve.";
+            } else {
+                nextServer = 2; // bot opens — auto-serves on phaseTimer
+                statusText = "Bot is preparing the opening shot.";
+            }
+        }
+    }
+
+    public MatchMode getMatchMode() {
+        return matchMode;
     }
 
     /**
@@ -297,9 +323,10 @@ public final class MatchWorld3D {
     public boolean playerHit(float vx, float vy, float vz) {
         if (phase != Phase.INCOMING) return false;
         if (!crossedNet || ballPos.z <= 0f) return false;
+        if (!HitVelocity.sanitizeNetworkReturn(1, vx, vy, vz, sanitizedVel)) return false;
         rallyCount++;
         pendingBotReturnChance = computeBotReturnChance();
-        ballVel.set(vx, vy, vz);
+        ballVel.set(sanitizedVel);
         crossedNet = false;
         bouncesOnPlayerSide = 0;
         phase = Phase.OUTGOING;
@@ -342,8 +369,9 @@ public final class MatchWorld3D {
         } else if (phase != Phase.BOT_RESOLVE) {
             return false;
         }
+        if (!HitVelocity.sanitizeNetworkReturn(2, vx, vy, vz, sanitizedVel)) return false;
         rallyCount++;
-        ballVel.set(vx, vy, vz);
+        ballVel.set(sanitizedVel);
         crossedNet = false;
         bouncesOnPlayerSide = 0;
         phase = Phase.INCOMING;
@@ -380,24 +408,19 @@ public final class MatchWorld3D {
     public boolean tryHitBall(Ray pickRay) {
         if (phase != Phase.INCOMING) return false;
         if (ballPos.z < 0f || ballPos.z > TABLE_HALF_LENGTH + 1.5f) return false;
-        float hitRadius = BALL_RADIUS * player.getTargetScaleMultiplier() * CLICK_HIT_PADDING;
-        if (!Intersector.intersectRaySphere(pickRay, ballPos, hitRadius, hitPoint)) return false;
+        if (!HitVelocity.computeFromRay(pickRay, ballPos, player.getTargetScaleMultiplier(),
+                player.getReturnPowerMultiplier(), true, ballVel, hitPoint, tmpVel)) {
+            return false;
+        }
 
-        Vector3 offset = hitPoint.cpy().sub(ballPos);
-        float ndx = MathUtils.clamp(offset.x / hitRadius, -1f, 1f);
-        float ndy = MathUtils.clamp(offset.y / hitRadius, -1f, 1f);
+        tmpVel.set(hitPoint).sub(ballPos);
+        float hitRadius = BALL_RADIUS * player.getTargetScaleMultiplier() * HitVelocity.CLICK_HIT_PADDING;
+        float ndx = MathUtils.clamp(tmpVel.x / hitRadius, -1f, 1f);
+        float ndy = MathUtils.clamp(tmpVel.y / hitRadius, -1f, 1f);
         float power = (float) Math.sqrt(ndx * ndx + ndy * ndy);
-
         lastClickAccuracy = 1f - MathUtils.clamp(power, 0f, 1f);
         rallyCount++;
         pendingBotReturnChance = computeBotReturnChance();
-
-        float returnPower = player.getReturnPowerMultiplier();
-        ballVel.set(
-            ndx * 3.2f,
-            5.0f + ndy * 2.0f,
-            -(7.5f + power * 2.0f) * returnPower
-        );
         crossedNet = false;
         phase = Phase.OUTGOING;
         statusText = "Clean return. Ball is travelling back to the bot.";
@@ -429,10 +452,42 @@ public final class MatchWorld3D {
      * P2's serve in network mode. Launches the ball from the −z end toward P1 (+z),
      * entering INCOMING (P1's perspective) so P1 becomes the active player.
      */
+    /**
+     * Authoritative click for P1: serve when allowed, otherwise return the ball.
+     */
+    public boolean handlePlayerClick(Ray pickRay) {
+        if (phase == Phase.PREPARE_SERVE && nextServer == 1) {
+            return tryPlayerServe();
+        }
+        return tryHitBall(pickRay);
+    }
+
+    /**
+     * Authoritative click for P2 (human PvP only).
+     */
+    public boolean handleOpponentClick(Ray pickRay) {
+        if (matchMode != MatchMode.PVP) return false;
+        if (phase == Phase.PREPARE_SERVE && nextServer == 2) {
+            return tryClientServe();
+        }
+        if (!isClientCanHit()) return false;
+        if (!HitVelocity.computeFromRay(pickRay, ballPos, bot.getTargetScaleMultiplier(),
+                bot.getReturnPowerMultiplier(), false, ballVel, hitPoint, tmpVel)) {
+            return false;
+        }
+        rallyCount++;
+        crossedNet = false;
+        bouncesOnPlayerSide = 0;
+        phase = Phase.INCOMING;
+        statusText = "P2 returns! Ball heading to P1.";
+        paddleHitEvent = true;
+        return true;
+    }
+
     public boolean tryClientServe() {
         if (phase != Phase.PREPARE_SERVE) return false;
         if (nextServer != 2) return false;
-        if (!networkMode) return false; // single-player: bot auto-serves on a timer
+        if (matchMode != MatchMode.PVP) return false; // BOT: P2 serves via server AI timer
         float startX = (random.nextFloat() - 0.5f) * TABLE_HALF_WIDTH * 0.6f;
         ballPos.set(startX, TABLE_TOP_Y + 1.2f, -TABLE_HALF_LENGTH + 0.5f);
         ballVel.set(0f, 5.0f, 10f); // toward P1 (+z)
@@ -511,6 +566,7 @@ public final class MatchWorld3D {
     public boolean isBallVisible()              { return ballVisible; }
     public int     getPlayerLives()             { return player.getLives(); }
     public int     getBotLives()                { return bot.getLives(); }
+    public int     getP2Lives()                 { return bot.getLives(); }
     public int     getRallyCount()              { return rallyCount; }
     public String  getStatusText()              { return statusText; }
     public MatchOutcome getOutcome()            { return outcome; }

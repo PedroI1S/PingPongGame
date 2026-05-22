@@ -7,6 +7,7 @@ import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import com.badlogic.gdx.math.Vector3;
 import io.github.some_example_name.Main;
 import io.github.some_example_name.assets.ProceduralAssets;
 import io.github.some_example_name.config.GameConfig;
@@ -14,38 +15,37 @@ import io.github.some_example_name.config.Palette;
 import io.github.some_example_name.network.GameConnection;
 import io.github.some_example_name.network.PacketType;
 import io.github.some_example_name.network.RoomCode;
-import io.github.some_example_name.server.GameServer;
+import io.github.some_example_name.model.MatchMode;
 
 import java.net.InetAddress;
 import java.net.NetworkInterface;
+import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.List;
 
 /**
- * Lobby screen for the server-authoritative multiplayer mode.
+ * Lobby screen for server-authoritative LAN multiplayer.
  *
- * <h3>HOST flow</h3>
- * <ol>
- *   <li>Press H → {@link GameServer} starts on a background thread.</li>
- *   <li>Once the server socket is listening, a {@link GameConnection} connects to
- *       {@code localhost:}{@link PacketType#PORT}.</li>
- *   <li>Server sends {@code WELCOME(1)} → lobby stores connection + server in the
- *       session and transitions to {@link NetMatchScreen} as Player 1.</li>
- *   <li>Match screen shows "waiting for opponent" until a second player joins
- *       and the server starts broadcasting STATE.</li>
- * </ol>
+ * <p>Buckshot-Roulette-style bunker UI with everything reachable by mouse.
+ * Keyboard shortcuts (H / J / ENTER / ESC) still work.</p>
  *
- * <h3>JOIN flow</h3>
- * <ol>
- *   <li>Press J → enter the host's 7-character room code.</li>
- *   <li>{@link GameConnection} connects to the decoded IP.</li>
- *   <li>Server sends {@code WELCOME(2)} → transition to {@link NetMatchScreen}.</li>
- * </ol>
+ * <h3>HOST</h3>
+ * Click [HOST] → connects to the running server → {@code JOIN(pvp)} → waits for
+ * a second player → {@link NetMatchScreen}.
+ *
+ * <p>Start the server first: {@code ./gradlew server:run}</p>
+ *
+ * <h3>JOIN</h3>
+ * Click [JOIN] → type the host's 7-char room code → click [CONNECT] →
+ * connection opens to the decoded IP → on {@code WELCOME(2)} the lobby
+ * transitions to {@link NetMatchScreen}.
  */
 public final class MultiplayerLobbyScreen extends BaseScreen {
 
     private enum Phase { IDLE, AWAITING_CODE, HOSTING_WAIT, CONNECTING, ERROR }
 
     private final InputHandler input = new InputHandler();
+    private final Vector3 cursorWorld = new Vector3();
     private Phase phase = Phase.IDLE;
     private float clock;
 
@@ -53,19 +53,34 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     private String codeBuffer    = "";
     private String errorText;
 
-    /**
-     * In-flight connection — held until {@code WELCOME} arrives, then handed to
-     * {@link io.github.some_example_name.core.GameSession} with ownership transferred.
-     */
     private GameConnection pendingConn;
 
-    /**
-     * Local server — non-null only when this machine is the host.
-     * Handed to the session alongside {@code pendingConn}.
-     */
-    private GameServer pendingServer;
+    // ── Buttons ───────────────────────────────────────────────────────────────
 
-    public MultiplayerLobbyScreen(Main game) { super(game); }
+    private final Button hostBtn;
+    private final Button joinBtn;
+    private final Button backToMenuBtn;
+    private final Button connectBtn;
+    private final Button cancelCodeBtn;
+    private final Button cancelHostBtn;
+    private final Button cancelConnectBtn;
+    private final Button errorBackBtn;
+
+    public MultiplayerLobbyScreen(Main game) {
+        super(game);
+        float cx = GameConfig.WORLD_WIDTH * 0.5f;
+
+        hostBtn       = new Button(cx - 220f, 320f, 200f, 110f, "[ HOST ]",  Palette.RED,  this::startHosting);
+        joinBtn       = new Button(cx +  20f, 320f, 200f, 110f, "[ JOIN ]",  Palette.WARM, this::startJoining);
+        backToMenuBtn = new Button(cx -  90f, 170f, 180f,  56f, "BACK TO MENU", Palette.TEXT_DIM, game::openMenu);
+
+        connectBtn    = new Button(cx -  90f, 320f, 180f,  56f, "[ CONNECT ]", Palette.WARM, this::confirmCode);
+        cancelCodeBtn = new Button(cx -  90f, 240f, 180f,  44f, "CANCEL", Palette.TEXT_DIM, () -> phase = Phase.IDLE);
+
+        cancelHostBtn    = new Button(cx -  90f, 220f, 180f,  56f, "CANCEL", Palette.RED, this::cancelInProgress);
+        cancelConnectBtn = new Button(cx -  90f, 320f, 180f,  56f, "CANCEL", Palette.RED, this::cancelInProgress);
+        errorBackBtn     = new Button(cx -  90f, 320f, 180f,  56f, "BACK", Palette.WARM, () -> phase = Phase.IDLE);
+    }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -86,12 +101,20 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
         Gdx.input.setInputProcessor(null);
     }
 
+    @Override
+    public void resize(int width, int height) {
+        super.resize(width, height);
+    }
+
     // ── Render ────────────────────────────────────────────────────────────────
 
     @Override
     public void render(float delta) {
         clock += delta;
+        updateCursorWorld();
+        for (Button b : activeButtons()) b.updateHover(cursorWorld.x, cursorWorld.y);
 
+        // Lobby is a menu — no retro post-process here.
         beginFrame(Palette.BG.r, Palette.BG.g, Palette.BG.b);
         SpriteBatch      batch   = context.getBatch();
         ProceduralAssets visuals = context.getAssets().getProceduralAssets();
@@ -101,33 +124,32 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
 
         batch.begin();
         batch.setColor(Color.WHITE);
-        batch.draw(visuals.getBackground(), 0f, 0f, GameConfig.WORLD_WIDTH, GameConfig.WORLD_HEIGHT);
-        UIDraw.redGrid(batch, pixel, 0.04f);
-        UIDraw.scanlines(batch, pixel);
-        UIDraw.movingScanline(batch, pixel, clock, 6f);
-        UIDraw.filmGrain(batch, visuals.getNoise(), clock, 0.05f);
+        UIDraw.fill(batch, pixel, Palette.BG, 0f, 0f,
+            GameConfig.WORLD_WIDTH, GameConfig.WORLD_HEIGHT);
         UIDraw.cornerMarks(batch, pixel, 24f);
 
         UIDraw.topBar(batch, pixel, body, context.getGlyphLayout(),
-            "<- BACK TO MENU (ESC)", "PHASE // LOBBY", Palette.TEXT_DIM);
+            "MULTIPLAYER LOBBY", "PORT " + PacketType.PORT, Palette.WARM);
         UIDraw.bottomBar(batch, pixel, body, context.getGlyphLayout(),
-            bottomHint(), "PORT " + PacketType.PORT, Palette.TEXT_DIM);
+            bottomHint(), "CLICK ANYTHING — KEYBOARD ALSO WORKS", Palette.TEXT_DIM);
 
         float cx = GameConfig.WORLD_WIDTH * 0.5f;
-
         UIDraw.centered(batch, body, context.getGlyphLayout(),
             "===  LAN DUEL  ===", cx, 660f, Palette.RED);
-        title.getData().setScale(2.2f);
+        title.getData().setScale(2.6f);
         UIDraw.centered(batch, title, context.getGlyphLayout(),
-            "MULTIPLAYER LOBBY", cx, 615f, Palette.TEXT);
+            "WHO IS HOSTING", cx, 605f, Palette.TEXT);
+        title.getData().setScale(2.2f);
 
         switch (phase) {
-            case IDLE         -> drawIdle(batch, pixel, body, cx);
+            case IDLE          -> drawIdle(batch, pixel, body, cx);
             case AWAITING_CODE -> drawAwaitingCode(batch, pixel, body, cx);
-            case HOSTING_WAIT -> drawHostingWait(batch, pixel, body, title, cx);
-            case CONNECTING   -> drawConnecting(batch, pixel, body, cx);
-            case ERROR        -> drawError(batch, pixel, body, cx);
+            case HOSTING_WAIT  -> drawHostingWait(batch, pixel, body, title, cx);
+            case CONNECTING    -> drawConnecting(batch, pixel, body, cx);
+            case ERROR         -> drawError(batch, pixel, body, cx);
         }
+
+        for (Button b : activeButtons()) b.draw(batch, pixel, body, context.getGlyphLayout());
 
         batch.end();
     }
@@ -136,24 +158,23 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
 
     private void drawIdle(SpriteBatch batch, Texture pixel, BitmapFont body, float cx) {
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "PRESS H TO HOST    OR    J TO JOIN A GAME", cx, 540f, Palette.TEXT_DIM);
-        drawSquareBtn(batch, pixel, body, "[H] HOST", cx - 200f, 380f, Palette.RED);
-        drawSquareBtn(batch, pixel, body, "[J] JOIN", cx +  40f, 380f, Palette.BLUE);
+            "ONE OF YOU OPENS A SERVER.  THE OTHER TYPES YOUR ROOM CODE.",
+            cx, 540f, Palette.TEXT_DIM);
+
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "YOUR ROOM CODE:", cx, 265f, Palette.TEXT_DIM);
+            "YOUR ROOM CODE:", cx, 270f, Palette.TEXT_DIM);
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            localRoomCode,    cx, 230f, Palette.GREEN);
+            localRoomCode, cx, 240f, Palette.WARM);
     }
 
     private void drawAwaitingCode(SpriteBatch batch, Texture pixel, BitmapFont body, float cx) {
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "ENTER HOST'S ROOM CODE  (" + RoomCode.LENGTH
-                + " CHARS — BACKSPACE / ENTER / ESC)",
+            "ENTER THE HOST'S " + RoomCode.LENGTH + "-CHARACTER CODE.",
             cx, 540f, Palette.TEXT_DIM);
 
-        float w = 320f, h = 64f, x = cx - w * 0.5f, y = 420f;
+        float w = 360f, h = 70f, x = cx - w * 0.5f, y = 430f;
         UIDraw.fill(batch, pixel, Palette.SURFACE, x, y, w, h);
-        UIDraw.border(batch, pixel, Palette.BLUE, x, y, w, h, 2f);
+        UIDraw.border(batch, pixel, Palette.WARM, x, y, w, h, 2f);
 
         boolean cursorOn = ((int)(clock * 2f)) % 2 == 0;
         StringBuilder spaced = new StringBuilder();
@@ -163,98 +184,62 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
         }
         if (cursorOn) { if (spaced.length() > 0) spaced.append(' '); spaced.append('_'); }
         body.setColor(Palette.TEXT);
-        body.draw(batch, spaced.toString(), x + 16f, y + 40f);
+        body.draw(batch, spaced.toString(), x + 18f, y + 44f);
 
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "LOCAL TESTING CODE: " + RoomCode.encode("127.0.0.1"),
-            cx, 340f, Palette.TEXT_DIM);
+            "LOCAL TEST CODE: " + RoomCode.encode("127.0.0.1"),
+            cx, 405f, Palette.TEXT_DIM);
     }
 
     private void drawHostingWait(SpriteBatch batch, Texture pixel, BitmapFont body,
                                  BitmapFont title, float cx) {
         boolean blink = ((int)(clock * 1.6f)) % 2 == 0;
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "SERVER RUNNING — WAITING FOR OPPONENT" + (blink ? " ..." : "    "),
-            cx, 510f, Palette.RED);
+            "SERVER ONLINE — WAITING FOR THE OTHER SIDE" + (blink ? " ..." : "    "),
+            cx, 540f, Palette.RED);
+
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "SHARE YOUR ROOM CODE:", cx, 460f, Palette.TEXT_DIM);
-        title.getData().setScale(3.2f);
+            "SHARE YOUR ROOM CODE:", cx, 480f, Palette.TEXT_DIM);
+        title.getData().setScale(3.4f);
         UIDraw.centered(batch, title, context.getGlyphLayout(),
-            localRoomCode, cx, 400f, Palette.GREEN);
+            localRoomCode, cx, 410f, Palette.WARM);
         title.getData().setScale(2.2f);
-        UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "ESC TO CANCEL", cx, 310f, Palette.TEXT_DIM);
     }
 
     private void drawConnecting(SpriteBatch batch, Texture pixel, BitmapFont body, float cx) {
         boolean blink = ((int)(clock * 1.6f)) % 2 == 0;
         UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "CONNECTING" + (blink ? " ..." : "    "), cx, 480f, Palette.BLUE);
-        UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "ESC TO CANCEL", cx, 320f, Palette.TEXT_DIM);
+            "DIALING IN" + (blink ? " ..." : "    "), cx, 480f, Palette.WARM);
     }
 
     private void drawError(SpriteBatch batch, Texture pixel, BitmapFont body, float cx) {
         UIDraw.centered(batch, body, context.getGlyphLayout(),
             "ERROR: " + (errorText == null ? "UNKNOWN" : errorText.toUpperCase()),
             cx, 480f, Palette.RED);
-        UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "PRESS ESC OR ENTER TO RETURN", cx, 380f, Palette.TEXT_DIM);
     }
 
-    // ── Input ─────────────────────────────────────────────────────────────────
+    // ── Active buttons per phase ──────────────────────────────────────────────
 
-    private void onKeyPressed(int key) {
-        if (key == Input.Keys.ESCAPE) { handleEscape(); return; }
+    private List<Button> activeButtons() {
+        List<Button> out = new ArrayList<>();
         switch (phase) {
-            case IDLE -> {
-                if      (key == Input.Keys.H) startHosting();
-                else if (key == Input.Keys.J) startJoining();
-            }
-            case AWAITING_CODE -> {
-                if (key == Input.Keys.ENTER) confirmCode();
-                else if (key == Input.Keys.BACKSPACE && !codeBuffer.isEmpty())
-                    codeBuffer = codeBuffer.substring(0, codeBuffer.length() - 1);
-            }
-            case ERROR -> {
-                if (key == Input.Keys.ENTER) phase = Phase.IDLE;
-            }
-            default -> {}
+            case IDLE          -> { out.add(hostBtn); out.add(joinBtn); out.add(backToMenuBtn); }
+            case AWAITING_CODE -> { out.add(connectBtn); out.add(cancelCodeBtn); }
+            case HOSTING_WAIT  -> out.add(cancelHostBtn);
+            case CONNECTING    -> out.add(cancelConnectBtn);
+            case ERROR         -> out.add(errorBackBtn);
         }
-    }
-
-    private void onCharTyped(char ch) {
-        if (phase != Phase.AWAITING_CODE) return;
-        if (codeBuffer.length() >= RoomCode.LENGTH) return;
-        if (RoomCode.isValidChar(ch)) codeBuffer += Character.toUpperCase(ch);
-    }
-
-    private void handleEscape() {
-        switch (phase) {
-            case IDLE  -> game.openMenu();
-            case ERROR -> phase = Phase.IDLE;
-            default    -> { cleanupPending(); phase = Phase.IDLE; }
-        }
+        connectBtn.enabled = codeBuffer.length() == RoomCode.LENGTH;
+        return out;
     }
 
     // ── Connection logic ──────────────────────────────────────────────────────
 
     private void startHosting() {
+        // The dedicated server is already running (auto-launched by Main at startup
+        // on 0.0.0.0 so LAN guests can reach the host's IP directly).
+        // Just connect to it locally and send JOIN(PVP).
         phase = Phase.HOSTING_WAIT;
-        GameServer server = new GameServer();
-        pendingServer = server;
-        // Start server; its callback fires on the server thread, we dispatch to GL.
-        server.start(
-            context.getSession().buildMatchConfig(),
-            context.getSession().getRandom(),
-            () -> Gdx.app.postRunnable(this::onServerReady),
-            () -> Gdx.app.postRunnable(() -> showError("server failed to start"))
-        );
-    }
-
-    /** GL-thread callback: server socket is open, connect as P1. */
-    private void onServerReady() {
-        if (phase != Phase.HOSTING_WAIT) return; // user cancelled
         openConnection("127.0.0.1");
     }
 
@@ -271,16 +256,14 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
         openConnection(ip);
     }
 
-    /**
-     * Creates a {@link GameConnection} to {@code host:PORT} and stores it in
-     * {@code pendingConn} immediately — before any callback can fire on the GL
-     * thread.  The lobby listener transitions to {@link NetMatchScreen} on
-     * {@code WELCOME}.
-     */
     private void openConnection(String host) {
         pendingConn = GameConnection.connect(
             host, PacketType.PORT, Gdx.app::postRunnable, new LobbyListener());
-        // pendingConn is set before any GL callback fires; safe.
+    }
+
+    private void cancelInProgress() {
+        cleanupPending();
+        phase = Phase.IDLE;
     }
 
     private void showError(String text) {
@@ -289,64 +272,70 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
         cleanupPending();
     }
 
-    /** Closes and nulls in-progress connection / server without crashing. */
     private void cleanupPending() {
         if (pendingConn   != null) { pendingConn.close();  pendingConn   = null; }
-        if (pendingServer != null) { pendingServer.stop(); pendingServer = null; }
+        context.getSession().clearMultiplayer();
     }
 
-    // ── Lobby listener (always on GL thread) ──────────────────────────────────
+    // ── Lobby listener (GL thread) ────────────────────────────────────────────
 
     private final class LobbyListener implements GameConnection.Listener {
+        private int assignedPlayer;
+        private boolean welcomeReceived;
+        private boolean matchReadyReceived;
+
+        @Override
+        public void onConnected() {
+            if (pendingConn != null) {
+                pendingConn.sendJoin(PacketType.MODE_PVP);
+            }
+        }
+
         @Override
         public void onWaiting() {
-            // P1 received this: server is open, waiting for P2.
-            // Already showing HOSTING_WAIT — no UI change needed.
+            phase = Phase.HOSTING_WAIT;
         }
 
         @Override
         public void onWelcome(int playerNumber) {
-            if (pendingConn == null) return;
-            // Transfer ownership to the session.
-            context.getSession().setMultiplayerConnection(pendingConn, playerNumber, pendingServer);
-            pendingConn   = null; // transferred
-            pendingServer = null;
+            assignedPlayer = playerNumber;
+            welcomeReceived = true;
+            tryEnterMatch();
+        }
+
+        @Override
+        public void onMatchReady(int matchModeWire) {
+            matchReadyReceived = true;
+            tryEnterMatch();
+        }
+
+        private void tryEnterMatch() {
+            if (!welcomeReceived || !matchReadyReceived || pendingConn == null) return;
+            context.getSession().setMultiplayerConnection(pendingConn, assignedPlayer, MatchMode.PVP);
+            pendingConn = null;
             game.openNetMatch();
         }
 
-        @Override
-        public void onDisconnected() {
-            showError("connection lost before game started");
-        }
-
-        @Override
-        public void onError(String reason) {
-            showError(reason);
-        }
+        @Override public void onDisconnected()  { showError("connection lost — is the server running?"); }
+        @Override public void onError(String r) { showError(r); }
     }
 
-    // ── UI helpers ────────────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private void drawSquareBtn(SpriteBatch batch, Texture pixel, BitmapFont font,
-                               String text, float x, float y, Color accent) {
-        float w = 160f, h = 90f;
-        UIDraw.fill(batch, pixel, accent, 0.08f, x, y, w, h);
-        UIDraw.border(batch, pixel, accent, x, y, w, h, 2f);
-        UIDraw.centered(batch, font, context.getGlyphLayout(),
-            text, x + w * 0.5f, y + 56f, accent);
+    private void updateCursorWorld() {
+        cursorWorld.set(Gdx.input.getX(), Gdx.input.getY(), 0f);
+        context.getViewport().unproject(cursorWorld);
     }
 
     private String bottomHint() {
         return switch (phase) {
-            case IDLE          -> "H = HOST    J = JOIN    ESC = BACK";
-            case AWAITING_CODE -> "TYPE ROOM CODE    ENTER = CONNECT    ESC = CANCEL";
-            case HOSTING_WAIT  -> "WAITING FOR SECOND PLAYER...";
-            case CONNECTING    -> "CONNECTING...";
-            case ERROR         -> "ESC = BACK";
+            case IDLE          -> "[H] HOST    [J] JOIN    [ESC] BACK";
+            case AWAITING_CODE -> "TYPE THE ROOM CODE  --  [ENTER] CONNECT  --  [ESC] CANCEL";
+            case HOSTING_WAIT  -> "WAITING...  --  [ESC] CANCEL";
+            case CONNECTING    -> "DIALING...  --  [ESC] CANCEL";
+            case ERROR         -> "[ENTER / ESC] BACK";
         };
     }
-
-    // ── Network utility ───────────────────────────────────────────────────────
 
     private static String discoverLocalIp() {
         try {
@@ -365,8 +354,56 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
         return "127.0.0.1";
     }
 
+    // ── Input ─────────────────────────────────────────────────────────────────
+
     private final class InputHandler extends InputAdapter {
-        @Override public boolean keyDown(int k)  { onKeyPressed(k); return true; }
-        @Override public boolean keyTyped(char c) { onCharTyped(c); return true; }
+        @Override
+        public boolean keyDown(int k) {
+            if (k == Input.Keys.ESCAPE) { handleEscape(); return true; }
+            switch (phase) {
+                case IDLE -> {
+                    if (k == Input.Keys.H) startHosting();
+                    else if (k == Input.Keys.J) startJoining();
+                }
+                case AWAITING_CODE -> {
+                    if (k == Input.Keys.ENTER) confirmCode();
+                    else if (k == Input.Keys.BACKSPACE && !codeBuffer.isEmpty())
+                        codeBuffer = codeBuffer.substring(0, codeBuffer.length() - 1);
+                }
+                case ERROR -> {
+                    if (k == Input.Keys.ENTER) phase = Phase.IDLE;
+                }
+                default -> {}
+            }
+            return true;
+        }
+
+        @Override
+        public boolean keyTyped(char ch) {
+            if (phase != Phase.AWAITING_CODE) return false;
+            if (codeBuffer.length() >= RoomCode.LENGTH) return false;
+            if (RoomCode.isValidChar(ch)) {
+                codeBuffer += Character.toUpperCase(ch);
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public boolean touchDown(int sx, int sy, int pointer, int btn) {
+            updateCursorWorld();
+            for (Button b : activeButtons()) {
+                if (b.tryClick(cursorWorld.x, cursorWorld.y)) return true;
+            }
+            return false;
+        }
+    }
+
+    private void handleEscape() {
+        switch (phase) {
+            case IDLE  -> game.openMenu();
+            case ERROR -> phase = Phase.IDLE;
+            default    -> { cleanupPending(); phase = Phase.IDLE; }
+        }
     }
 }
