@@ -168,10 +168,7 @@ public final class GameServer {
             if (prevPhase != Phase.ITEM_PHASE && curPhase == Phase.ITEM_PHASE) {
                 broadcastItemDealt(w);
                 if (mode == MatchMode.BOT) {
-                    long botReadyAt = System.nanoTime() + 500_000_000L;
-                    actions.offer(() -> {
-                        if (System.nanoTime() >= botReadyAt) w.playerReady(2);
-                    });
+                    actions.offer(() -> w.playerReady(2));
                 }
             }
             prevPhase = curPhase;
