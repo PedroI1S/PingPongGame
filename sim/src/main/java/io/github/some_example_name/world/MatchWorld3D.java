@@ -229,6 +229,22 @@ public final class MatchWorld3D {
             }
         }
 
+        // Fly collision — ball hits an unswatted fly on P1's side
+        if (crossedNet && ballPos.z > 0f) {
+            for (int i = 0; i < p1Effects.flies.size(); i++) {
+                FlyState fly = p1Effects.flies.get(i);
+                if (!fly.alive) continue;
+                float flyY = TABLE_TOP_Y + 0.4f;
+                float dx = ballPos.x - fly.x, dy = ballPos.y - flyY, dz = ballPos.z - fly.z;
+                if (dx*dx + dy*dy + dz*dz < FlyState.FLY_RADIUS * FlyState.FLY_RADIUS) {
+                    fly.alive = false;
+                    flyKilledIndex = i;
+                    handlePlayerFlyHit();
+                    return;
+                }
+            }
+        }
+
         if (ballPos.z > TABLE_HALF_LENGTH + 1.5f) { handlePlayerMiss(); return; }
         if (ballPos.y < 0f)                       { handlePlayerMiss(); }
     }
@@ -264,6 +280,22 @@ public final class MatchWorld3D {
                 handlePlayerFault("Out of bounds! Try a more centred shot.");
             }
             return;
+        }
+
+        // Fly collision — ball hits an unswatted fly on P2's side
+        if (crossedNet && ballPos.z < 0f) {
+            for (int i = 0; i < p2Effects.flies.size(); i++) {
+                FlyState fly = p2Effects.flies.get(i);
+                if (!fly.alive) continue;
+                float flyY = TABLE_TOP_Y + 0.4f;
+                float dx = ballPos.x - fly.x, dy = ballPos.y - flyY, dz = ballPos.z - fly.z;
+                if (dx*dx + dy*dy + dz*dz < FlyState.FLY_RADIUS * FlyState.FLY_RADIUS) {
+                    fly.alive = false;
+                    flyKilledIndex = i;
+                    handleBotFlyHit();
+                    return;
+                }
+            }
         }
 
         if (ballPos.y < 0f
@@ -312,9 +344,8 @@ public final class MatchWorld3D {
                 ballVisible = false;
                 return;
             }
-            nextServer = 1; // player scored — player serves next
-            prepareServe(GameConfig.BETWEEN_POINTS_DELAY,
-                "Bot missed. Click anywhere to serve.");
+            nextServer = 1;
+            enterItemPhase();
         }
     }
 
@@ -435,8 +466,8 @@ public final class MatchWorld3D {
             ballVisible = false;
             return;
         }
-        nextServer = 1; // P1 scored, P1 serves next
-        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, "Opponent missed. P1 serves next.");
+        nextServer = 1;
+        enterItemPhase();
     }
 
     /**
@@ -472,6 +503,25 @@ public final class MatchWorld3D {
         statusText = "Clean return. Ball is travelling back to the bot.";
         paddleHitEvent = true;
         return true;
+    }
+
+    public int trySwatFly(Ray pickRay, int playerNumber) {
+        java.util.List<FlyState> flies = playerNumber == 1 ? p1Effects.flies : p2Effects.flies;
+        for (int i = 0; i < flies.size(); i++) {
+            FlyState fly = flies.get(i);
+            if (!fly.alive) continue;
+            float flyY = TABLE_TOP_Y + 0.4f;
+            float ox = pickRay.origin.x - fly.x, oy = pickRay.origin.y - flyY, oz = pickRay.origin.z - fly.z;
+            float dx = pickRay.direction.x, dy = pickRay.direction.y, dz = pickRay.direction.z;
+            float b = 2f * (dx*ox + dy*oy + dz*oz);
+            float c = ox*ox + oy*oy + oz*oz - FlyState.FLY_RADIUS * FlyState.FLY_RADIUS;
+            if (b*b - 4f*c >= 0f) {
+                fly.alive = false;
+                flyKilledIndex = i;
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -554,9 +604,8 @@ public final class MatchWorld3D {
             ballVisible = false;
             return;
         }
-        nextServer = 2; // P2 (bot) scored — they serve next
-        prepareServe(GameConfig.BETWEEN_POINTS_DELAY,
-            "You missed the shot. Opponent serves next.");
+        nextServer = 2;
+        enterItemPhase();
     }
 
     private void handlePlayerFault(String text) {
@@ -567,8 +616,8 @@ public final class MatchWorld3D {
             ballVisible = false;
             return;
         }
-        nextServer = 2; // P2 (bot) scored
-        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, text + " Opponent serves next.");
+        nextServer = 2;
+        enterItemPhase();
     }
 
     private void botMissedShot(String text) {
@@ -579,8 +628,26 @@ public final class MatchWorld3D {
             ballVisible = false;
             return;
         }
-        nextServer = 1; // P1 scored
-        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, text + " Click anywhere to serve.");
+        nextServer = 1;
+        enterItemPhase();
+    }
+
+    private void handlePlayerFlyHit() {
+        player.loseLife();
+        if (player.getLives() <= 0) {
+            outcome = MatchOutcome.BOT_WIN; ballVisible = false; return;
+        }
+        nextServer = 2;
+        enterItemPhase();
+    }
+
+    private void handleBotFlyHit() {
+        bot.loseLife();
+        if (bot.getLives() <= 0) {
+            outcome = MatchOutcome.PLAYER_WIN; ballVisible = false; return;
+        }
+        nextServer = 1;
+        enterItemPhase();
     }
 
     private float computeBotReturnChance() {
