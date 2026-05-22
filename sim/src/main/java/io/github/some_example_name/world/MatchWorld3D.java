@@ -8,9 +8,12 @@ import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Pool;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.model.ArenaSide;
+import io.github.some_example_name.model.ItemEffects;
+import io.github.some_example_name.model.ItemType;
 import io.github.some_example_name.model.MatchConfig;
 import io.github.some_example_name.model.MatchMode;
 import io.github.some_example_name.model.MatchOutcome;
+import io.github.some_example_name.model.PlayerInventory;
 
 /**
  * 3D POC version of the duel — physics-driven for both sides.
@@ -35,7 +38,7 @@ public final class MatchWorld3D {
 
     private final Vector3 sanitizedVel = new Vector3();
 
-    public enum Phase { PREPARE_SERVE, INCOMING, OUTGOING, BOT_RESOLVE }
+    public enum Phase { PREPARE_SERVE, INCOMING, OUTGOING, BOT_RESOLVE, ITEM_PHASE }
 
     private MatchMode matchMode = MatchMode.BOT;
 
@@ -74,6 +77,30 @@ public final class MatchWorld3D {
      */
     private int nextServer = 1;
 
+    private static final float ITEM_PHASE_TIMEOUT = 15f;
+    private static final int ITEMS_PER_DEAL = 2;
+
+    private final PlayerInventory p1Inventory = new PlayerInventory();
+    private final PlayerInventory p2Inventory = new PlayerInventory();
+    private final ItemEffects p1Effects = new ItemEffects();
+    private final ItemEffects p2Effects = new ItemEffects();
+
+    private boolean p1Ready;
+    private boolean p2Ready;
+
+    private byte[] lastDealtP1 = new byte[0];
+    private byte[] lastDealtP2 = new byte[0];
+
+    private boolean itemUsedEvent;
+    private int itemUsedPlayer;
+    private byte itemUsedId;
+
+    private boolean flySpawnEvent;
+    private float[] flySpawnXs = new float[0];
+    private float[] flySpawnZs = new float[0];
+
+    private int flyKilledIndex = -1;
+
     // Audio events — set true on relevant frames, consumed by the screen.
     private boolean paddleHitEvent;
     private boolean tableBounceEvent;
@@ -101,6 +128,7 @@ public final class MatchWorld3D {
             case INCOMING      -> updateIncoming(delta);
             case OUTGOING      -> updateOutgoing(delta);
             case BOT_RESOLVE   -> updateBotResolve(delta);
+            case ITEM_PHASE    -> updateItemPhase(delta);
         }
     }
 
@@ -288,6 +316,24 @@ public final class MatchWorld3D {
             prepareServe(GameConfig.BETWEEN_POINTS_DELAY,
                 "Bot missed. Click anywhere to serve.");
         }
+    }
+
+    private void updateItemPhase(float delta) {
+        player.tickPunchTimer(delta);
+        bot.tickPunchTimer(delta);
+        phaseTimer -= delta;
+        if ((p1Ready && p2Ready) || phaseTimer <= 0f) {
+            p1Ready = false;
+            p2Ready = false;
+            prepareServe(GameConfig.BETWEEN_POINTS_DELAY, buildServeStatusText());
+        }
+    }
+
+    private String buildServeStatusText() {
+        if (matchMode == MatchMode.PVP) {
+            return nextServer == 1 ? "P1 to serve." : "P2 to serve.";
+        }
+        return nextServer == 1 ? "Click anywhere to serve." : "Bot is preparing the opening shot.";
     }
 
     // ── server match API ──────────────────────────────────────────────────────
@@ -557,6 +603,50 @@ public final class MatchWorld3D {
         statusText = status;
         ballVisible = false;
     }
+
+    public void enterItemPhase() {
+        p1Effects.clear();
+        p2Effects.clear();
+        ItemType[] pool = ItemType.values();
+        lastDealtP1 = dealItems(p1Inventory, pool, ITEMS_PER_DEAL);
+        lastDealtP2 = dealItems(p2Inventory, pool, ITEMS_PER_DEAL);
+        p1Ready = false;
+        p2Ready = false;
+        phase = Phase.ITEM_PHASE;
+        phaseTimer = ITEM_PHASE_TIMEOUT;
+        statusText = "Use your items, then press READY.";
+    }
+
+    private byte[] dealItems(PlayerInventory inv, ItemType[] pool, int count) {
+        java.util.List<Byte> dealt = new java.util.ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            ItemType item = pool[(int)(random.nextLong() & Integer.MAX_VALUE) % pool.length];
+            if (inv.add(item)) dealt.add(item.getId());
+        }
+        byte[] arr = new byte[dealt.size()];
+        for (int i = 0; i < arr.length; i++) arr[i] = dealt.get(i);
+        return arr;
+    }
+
+    public void playerReady(int playerNumber) {
+        if (phase != Phase.ITEM_PHASE) return;
+        if (playerNumber == 1) p1Ready = true;
+        else p2Ready = true;
+        if (p1Ready && p2Ready) {
+            p1Ready = false;
+            p2Ready = false;
+            prepareServe(GameConfig.BETWEEN_POINTS_DELAY, buildServeStatusText());
+        }
+    }
+
+    public byte[] getLastDealtItems(int playerNumber) {
+        return playerNumber == 1 ? lastDealtP1 : lastDealtP2;
+    }
+
+    public PlayerInventory getP1Inventory() { return p1Inventory; }
+    public PlayerInventory getP2Inventory() { return p2Inventory; }
+    public ItemEffects getP1Effects() { return p1Effects; }
+    public ItemEffects getP2Effects() { return p2Effects; }
 
     // ── accessors ────────────────────────────────────────────────────────────
 
