@@ -170,6 +170,11 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
         // Render item cubes in 3D (uses a fresh modelBatch begin/end)
         if (inItemPhase && itemPhaseRenderer != null) {
+            // Update hover state from current mouse position each frame.
+            // getPickRay() handles Y-inversion internally, pass raw screen coords.
+            com.badlogic.gdx.math.collision.Ray hoverRay =
+                arena.getCamera().getPickRay(netInput.lastMouseX, netInput.lastMouseY);
+            itemPhaseRenderer.updateHover(hoverRay, playerNumber);
             itemPhaseRenderer.update(delta);
             arena.getModelBatch().begin(arena.getCamera());
             itemPhaseRenderer.render(arena.getModelBatch(), arena.getEnvironment());
@@ -290,26 +295,30 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     private void handleClick() {
         // During item phase: intercept all clicks
         if (inItemPhase) {
-            com.badlogic.gdx.Gdx.app.log("DBG", "[Client] click in ITEM_PHASE: rawY=" + netInput.lastClickY
-                + " screenH=" + Gdx.graphics.getHeight());
+            Gdx.app.log("DBG", "[Client] handleClick in ITEM_PHASE rawY=" + netInput.lastClickY
+                + " itemReadySent=" + itemReadySent + " rendererNull=" + (itemPhaseRenderer == null));
             if (itemPhaseRenderer != null && arena != null) {
-                // Ray-test against item cubes first
+                // Ray-test against item cubes first.
+                // getPickRay() already inverts Y internally via Camera.unproject(),
+                // so we pass raw screen coords (0,0 = top-left from touchDown).
                 com.badlogic.gdx.math.collision.Ray ray = arena.getCamera()
-                    .getPickRay(netInput.lastClickX,
-                                Gdx.graphics.getHeight() - netInput.lastClickY);
+                    .getPickRay(netInput.lastClickX, netInput.lastClickY);
                 ItemType picked = itemPhaseRenderer.pickItem(ray, playerNumber);
                 if (picked != null) {
-                    com.badlogic.gdx.Gdx.app.log("DBG", "[Client] item picked: " + picked);
+                    Gdx.app.log("DBG", "[Client] item picked: " + picked + " → sendUseItem");
                     if (conn != null) conn.sendUseItem(picked.getId());
                     return; // consumed by item use
                 }
+                Gdx.app.log("DBG", "[Client] no item hit by ray");
             }
             // Click hit nothing — treat as READY
             if (!itemReadySent) {
-                com.badlogic.gdx.Gdx.app.log("DBG", "[Client] no item hit → sending ITEM_READY");
+                Gdx.app.log("DBG", "[Client] → sending ITEM_READY, setting inItemPhase=false");
                 itemReadySent = true;
                 inItemPhase = false;
                 if (conn != null) conn.sendItemReady();
+            } else {
+                Gdx.app.log("DBG", "[Client] itemReadySent already true, ignoring click");
             }
             return; // consume — no CLICK sent to server during ITEM_PHASE
         }
@@ -344,11 +353,16 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
                         int p1l, int p2l,
                         boolean visible, int ap) {
         waitingForOpponent = false;
+        Gdx.app.log("DBG", "[Client] onState ap=" + ap + " vis=" + visible + " inItemPhase=" + inItemPhase);
         // ap==0 only during ITEM_PHASE; any other value means server has moved on.
         // Queue on GL thread so it runs AFTER any pending onItemDealt postRunnables,
         // ensuring the clear wins the race against a late-arriving deal notification.
         if (ap != 0) {
-            Gdx.app.postRunnable(() -> { inItemPhase = false; itemReadySent = false; });
+            Gdx.app.postRunnable(() -> {
+                Gdx.app.log("DBG", "[Client] GL: clearing inItemPhase (ap≠0 from STATE)  was=" + inItemPhase);
+                inItemPhase = false;
+                itemReadySent = false;
+            });
         }
         snapBallPos.set(px, py, pz);
         snapBallVel.set(vx, vy, vz);
@@ -410,7 +424,10 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
     @Override
     public void onItemDealt(int forPlayer, byte[] itemIds) {
+        Gdx.app.log("DBG", "[Client] onItemDealt queued  forPlayer=" + forPlayer + " count=" + itemIds.length);
         Gdx.app.postRunnable(() -> {
+            Gdx.app.log("DBG", "[Client] GL: onItemDealt firing  forPlayer=" + forPlayer
+                + " inItemPhase-before=" + inItemPhase);
             List<ItemType> target = (forPlayer == playerNumber) ? myItems : oppItems;
             for (byte id : itemIds) {
                 ItemType t = ItemType.fromId(id);
@@ -419,6 +436,8 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             inItemPhase   = true;
             itemReadySent = false;
             if (itemPhaseRenderer != null) itemPhaseRenderer.load(myItems, oppItems);
+            Gdx.app.log("DBG", "[Client] GL: onItemDealt done  myItems=" + myItems.size()
+                + " oppItems=" + oppItems.size() + " rendererNull=" + (itemPhaseRenderer == null));
         });
     }
 

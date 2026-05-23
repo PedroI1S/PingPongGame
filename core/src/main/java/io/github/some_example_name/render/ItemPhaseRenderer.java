@@ -29,7 +29,8 @@ public final class ItemPhaseRenderer implements Disposable {
     private static final class ItemEntry {
         final ModelInstance instance;
         final ItemType type;
-        boolean hovered;
+        boolean hovered; // mouse is currently over this item (transient, per-frame)
+        boolean used;    // item has been consumed (permanent)
         float currentY;
         ItemEntry(ModelInstance inst, ItemType type) {
             this.instance = inst;
@@ -71,7 +72,27 @@ public final class ItemPhaseRenderer implements Disposable {
     public void markUsed(int playerNumber, ItemType item) {
         Array<ItemEntry> entries = playerNumber == 1 ? p1Entries : p2Entries;
         for (ItemEntry e : entries) {
-            if (e.type == item && !e.hovered) { e.hovered = true; return; }
+            if (e.type == item && !e.used) { e.used = true; e.hovered = false; return; }
+        }
+    }
+
+    /**
+     * Ray-tests all pickable items for the given player and updates the transient
+     * {@code hovered} flag so the floating animation activates on mouse-over.
+     * Call this every frame while in item phase.
+     */
+    public void updateHover(com.badlogic.gdx.math.collision.Ray ray, int playerNumber) {
+        Array<ItemEntry> entries = playerNumber == 1 ? p1Entries : p2Entries;
+        float r2 = ITEM_SIZE * ITEM_SIZE;
+        for (ItemEntry e : entries) {
+            if (e.used) { e.hovered = false; continue; }
+            float ex = e.instance.transform.val[Matrix4.M03];
+            float ey = e.currentY;
+            float ez = e.instance.transform.val[Matrix4.M23];
+            float ox = ray.origin.x - ex, oy = ray.origin.y - ey, oz = ray.origin.z - ez;
+            float b  = 2f * (ray.direction.x * ox + ray.direction.y * oy + ray.direction.z * oz);
+            float c  = ox * ox + oy * oy + oz * oz - r2;
+            e.hovered = (b * b - 4f * c >= 0f);
         }
     }
 
@@ -82,7 +103,7 @@ public final class ItemPhaseRenderer implements Disposable {
 
     private void updateEntries(Array<ItemEntry> entries, float delta) {
         for (ItemEntry e : entries) {
-            float targetY = e.hovered ? ITEM_Y_HOVER : ITEM_Y_FLAT;
+            float targetY = (e.hovered || e.used) ? ITEM_Y_HOVER : ITEM_Y_FLAT;
             e.currentY += (targetY - e.currentY) * Math.min(1f, HOVER_LERP * delta);
             e.instance.transform.val[Matrix4.M13] = e.currentY;
         }
@@ -97,7 +118,7 @@ public final class ItemPhaseRenderer implements Disposable {
         Array<ItemEntry> entries = playerNumber == 1 ? p1Entries : p2Entries;
         float r2 = ITEM_SIZE * ITEM_SIZE;
         for (ItemEntry e : entries) {
-            if (e.hovered) continue;
+            if (e.used) continue;
             float ex = e.instance.transform.val[Matrix4.M03];
             float ey = e.instance.transform.val[Matrix4.M13];
             float ez = e.instance.transform.val[Matrix4.M23];
