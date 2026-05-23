@@ -344,10 +344,11 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
                         int p1l, int p2l,
                         boolean visible, int ap) {
         waitingForOpponent = false;
-        // ap==0 only during ITEM_PHASE; any other value means server has moved on
+        // ap==0 only during ITEM_PHASE; any other value means server has moved on.
+        // Queue on GL thread so it runs AFTER any pending onItemDealt postRunnables,
+        // ensuring the clear wins the race against a late-arriving deal notification.
         if (ap != 0) {
-            inItemPhase   = false;
-            itemReadySent = false;
+            Gdx.app.postRunnable(() -> { inItemPhase = false; itemReadySent = false; });
         }
         snapBallPos.set(px, py, pz);
         snapBallVel.set(vx, vy, vz);
