@@ -179,6 +179,7 @@ public final class MatchWorld3D {
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
+        System.out.printf("[DBG][World] phase %s → INCOMING (botServe)%n", phase);
         phase = Phase.INCOMING;
         statusText = "Click the ball as it comes through the table lane.";
     }
@@ -675,6 +676,7 @@ public final class MatchWorld3D {
     }
 
     private void prepareServe(float delay, String status) {
+        System.out.printf("[DBG][World] phase %s → PREPARE_SERVE (delay=%.2f)%n", phase, delay);
         phase = Phase.PREPARE_SERVE;
         phaseTimer = delay;
         statusText = status;
@@ -690,6 +692,7 @@ public final class MatchWorld3D {
         p1Ready = false;
         p2Ready = false;
         phase = Phase.ITEM_PHASE;
+        ballVisible = false;
         phaseTimer = ITEM_PHASE_TIMEOUT;
         itemPhaseLogTimer = 0f;
         statusText = "Use your items, then press READY.";
