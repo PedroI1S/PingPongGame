@@ -290,18 +290,26 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     private void handleClick() {
         // During item phase: intercept all clicks
         if (inItemPhase) {
-            // READY zone: bottom 15% of screen
-            if (netInput.lastClickY > Gdx.graphics.getHeight() * 0.85f && !itemReadySent) {
-                itemReadySent = true;
-                inItemPhase = false;
-                if (conn != null) conn.sendItemReady();
-            } else if (itemPhaseRenderer != null && arena != null) {
-                // Ray-test against item cubes
+            com.badlogic.gdx.Gdx.app.log("DBG", "[Client] click in ITEM_PHASE: rawY=" + netInput.lastClickY
+                + " screenH=" + Gdx.graphics.getHeight());
+            if (itemPhaseRenderer != null && arena != null) {
+                // Ray-test against item cubes first
                 com.badlogic.gdx.math.collision.Ray ray = arena.getCamera()
                     .getPickRay(netInput.lastClickX,
                                 Gdx.graphics.getHeight() - netInput.lastClickY);
                 ItemType picked = itemPhaseRenderer.pickItem(ray, playerNumber);
-                if (picked != null && conn != null) conn.sendUseItem(picked.getId());
+                if (picked != null) {
+                    com.badlogic.gdx.Gdx.app.log("DBG", "[Client] item picked: " + picked);
+                    if (conn != null) conn.sendUseItem(picked.getId());
+                    return; // consumed by item use
+                }
+            }
+            // Click hit nothing — treat as READY
+            if (!itemReadySent) {
+                com.badlogic.gdx.Gdx.app.log("DBG", "[Client] no item hit → sending ITEM_READY");
+                itemReadySent = true;
+                inItemPhase = false;
+                if (conn != null) conn.sendItemReady();
             }
             return; // consume — no CLICK sent to server during ITEM_PHASE
         }
@@ -336,6 +344,11 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
                         int p1l, int p2l,
                         boolean visible, int ap) {
         waitingForOpponent = false;
+        // ap==0 only during ITEM_PHASE; any other value means server has moved on
+        if (ap != 0) {
+            inItemPhase   = false;
+            itemReadySent = false;
+        }
         snapBallPos.set(px, py, pz);
         snapBallVel.set(vx, vy, vz);
         snapAge      = 0f;
@@ -378,57 +391,67 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
     @Override
     public void onRoundOver(int winner, int p1Wins, int p2Wins) {
-        String who = (playerNumber == winner) ? "YOU WIN THE ROUND" : "OPPONENT WINS THE ROUND";
-        roundOverlayText  = who + "  (" + p1Wins + " - " + p2Wins + ")";
-        roundOverlayTimer = 2.5f;
-        p1lives = GameConfig.DEFAULT_LIVES;
-        p2lives = GameConfig.DEFAULT_LIVES;
-        inItemPhase   = false;
-        itemReadySent = false;
-        myItems.clear();
-        oppItems.clear();
-        myFlies.clear();
-        oppFlies.clear();
-        punchTimer = 0f;
+        Gdx.app.postRunnable(() -> {
+            String who = (playerNumber == winner) ? "YOU WIN THE ROUND" : "OPPONENT WINS THE ROUND";
+            roundOverlayText  = who + "  (" + p1Wins + " - " + p2Wins + ")";
+            roundOverlayTimer = 2.5f;
+            p1lives = GameConfig.DEFAULT_LIVES;
+            p2lives = GameConfig.DEFAULT_LIVES;
+            inItemPhase   = false;
+            itemReadySent = false;
+            myItems.clear();
+            oppItems.clear();
+            myFlies.clear();
+            oppFlies.clear();
+            punchTimer = 0f;
+        });
     }
 
     @Override
     public void onItemDealt(int forPlayer, byte[] itemIds) {
-        List<ItemType> target = (forPlayer == playerNumber) ? myItems : oppItems;
-        for (byte id : itemIds) {
-            ItemType t = ItemType.fromId(id);
-            if (t != null) target.add(t);
-        }
-        inItemPhase   = true;
-        itemReadySent = false;
-        if (itemPhaseRenderer != null) itemPhaseRenderer.load(myItems, oppItems);
+        Gdx.app.postRunnable(() -> {
+            List<ItemType> target = (forPlayer == playerNumber) ? myItems : oppItems;
+            for (byte id : itemIds) {
+                ItemType t = ItemType.fromId(id);
+                if (t != null) target.add(t);
+            }
+            inItemPhase   = true;
+            itemReadySent = false;
+            if (itemPhaseRenderer != null) itemPhaseRenderer.load(myItems, oppItems);
+        });
     }
 
     @Override
     public void onItemUsed(int byPlayer, int itemId) {
-        ItemType t = ItemType.fromId((byte) itemId);
-        if (t == null) return;
-        List<ItemType> inv = (byPlayer == playerNumber) ? myItems : oppItems;
-        inv.remove(t);
-        if (itemPhaseRenderer != null) itemPhaseRenderer.markUsed(byPlayer, t);
-        if (t == ItemType.PUNCH && byPlayer != playerNumber) punchTimer = 10f;
+        Gdx.app.postRunnable(() -> {
+            ItemType t = ItemType.fromId((byte) itemId);
+            if (t == null) return;
+            List<ItemType> inv = (byPlayer == playerNumber) ? myItems : oppItems;
+            inv.remove(t);
+            if (itemPhaseRenderer != null) itemPhaseRenderer.markUsed(byPlayer, t);
+            if (t == ItemType.PUNCH && byPlayer != playerNumber) punchTimer = 10f;
+        });
     }
 
     @Override
     public void onFlySpawn(float[] xs, float[] zs) {
-        myFlies.clear();
-        for (int i = 0; i < xs.length; i++) myFlies.add(new FlyState(xs[i], zs[i]));
-        if (arena != null) arena.setFlies(myFlies, oppFlies);
+        Gdx.app.postRunnable(() -> {
+            myFlies.clear();
+            for (int i = 0; i < xs.length; i++) myFlies.add(new FlyState(xs[i], zs[i]));
+            if (arena != null) arena.setFlies(myFlies, oppFlies);
+        });
     }
 
     @Override
     public void onFlyKilled(int flyIndex) {
-        if (flyIndex < myFlies.size()) myFlies.get(flyIndex).alive = false;
-        else {
-            int oppIdx = flyIndex - myFlies.size();
-            if (oppIdx < oppFlies.size()) oppFlies.get(oppIdx).alive = false;
-        }
-        if (arena != null) arena.setFlies(myFlies, oppFlies);
+        Gdx.app.postRunnable(() -> {
+            if (flyIndex < myFlies.size()) myFlies.get(flyIndex).alive = false;
+            else {
+                int oppIdx = flyIndex - myFlies.size();
+                if (oppIdx < oppFlies.size()) oppFlies.get(oppIdx).alive = false;
+            }
+            if (arena != null) arena.setFlies(myFlies, oppFlies);
+        });
     }
 
     /** Master × SFX volume in [0..1]. */

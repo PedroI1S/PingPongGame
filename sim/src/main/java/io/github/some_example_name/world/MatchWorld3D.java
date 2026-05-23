@@ -349,13 +349,23 @@ public final class MatchWorld3D {
         }
     }
 
+    private float itemPhaseLogTimer = 0f;
     private void updateItemPhase(float delta) {
         player.tickPunchTimer(delta);
         bot.tickPunchTimer(delta);
         phaseTimer -= delta;
+        itemPhaseLogTimer -= delta;
+        if (itemPhaseLogTimer <= 0f) {
+            System.out.printf("[DBG][World] ITEM_PHASE tick: phaseTimer=%.1f p1Ready=%b p2Ready=%b%n",
+                phaseTimer, p1Ready, p2Ready);
+            itemPhaseLogTimer = 2f;
+        }
         if ((p1Ready && p2Ready) || phaseTimer <= 0f) {
+            System.out.printf("[DBG][World] ITEM_PHASE ending: p1Ready=%b p2Ready=%b timeout=%b%n",
+                p1Ready, p2Ready, phaseTimer <= 0f);
             p1Ready = false;
             p2Ready = false;
+            itemPhaseLogTimer = 0f;
             prepareServe(GameConfig.BETWEEN_POINTS_DELAY, buildServeStatusText());
         }
     }
@@ -681,7 +691,10 @@ public final class MatchWorld3D {
         p2Ready = false;
         phase = Phase.ITEM_PHASE;
         phaseTimer = ITEM_PHASE_TIMEOUT;
+        itemPhaseLogTimer = 0f;
         statusText = "Use your items, then press READY.";
+        System.out.printf("[DBG][World] enterItemPhase: p1Inv=%d p2Inv=%d dealtP1=%d dealtP2=%d%n",
+            p1Inventory.size(), p2Inventory.size(), lastDealtP1.length, lastDealtP2.length);
     }
 
     private byte[] dealItems(PlayerInventory inv, ItemType[] pool, int count) {
@@ -696,12 +709,20 @@ public final class MatchWorld3D {
     }
 
     public void playerReady(int playerNumber) {
-        if (phase != Phase.ITEM_PHASE) return;
+        System.out.printf("[DBG][World] playerReady(%d): phase=%s p1Ready=%b p2Ready=%b%n",
+            playerNumber, phase, p1Ready, p2Ready);
+        if (phase != Phase.ITEM_PHASE) {
+            System.out.println("[DBG][World] playerReady ignored — not in ITEM_PHASE");
+            return;
+        }
         if (playerNumber == 1) p1Ready = true;
         else p2Ready = true;
+        System.out.printf("[DBG][World] playerReady(%d) applied: p1Ready=%b p2Ready=%b%n",
+            playerNumber, p1Ready, p2Ready);
         if (p1Ready && p2Ready) {
             p1Ready = false;
             p2Ready = false;
+            System.out.println("[DBG][World] both ready → prepareServe");
             prepareServe(GameConfig.BETWEEN_POINTS_DELAY, buildServeStatusText());
         }
     }

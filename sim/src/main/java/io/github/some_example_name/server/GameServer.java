@@ -166,9 +166,14 @@ public final class GameServer {
 
             Phase curPhase = w.getPhase();
             if (prevPhase != Phase.ITEM_PHASE && curPhase == Phase.ITEM_PHASE) {
+                System.out.println("[DBG][Server] → ITEM_PHASE entered, broadcasting items");
                 broadcastItemDealt(w);
                 if (mode == MatchMode.BOT) {
-                    actions.offer(() -> w.playerReady(2));
+                    System.out.println("[DBG][Server] queuing bot playerReady(2)");
+                    actions.offer(() -> {
+                        System.out.println("[DBG][Server] executing bot playerReady(2)");
+                        w.playerReady(2);
+                    });
                 }
             }
             prevPhase = curPhase;
@@ -247,8 +252,8 @@ public final class GameServer {
         GameConnection c1 = p1, c2 = p2;
         if (c1 != null) c1.sendItemDealt(1, w.getLastDealtItems(1));
         if (c1 != null) c1.sendItemDealt(2, w.getLastDealtItems(2));
-        if (c2 != null) c2.sendItemDealt(1, w.getLastDealtItems(1));
         if (c2 != null) c2.sendItemDealt(2, w.getLastDealtItems(2));
+        if (c2 != null) c2.sendItemDealt(1, w.getLastDealtItems(1));
     }
 
     private void broadcastItemUsed(int playerNumber, byte itemId) {
@@ -376,8 +381,13 @@ public final class GameServer {
 
         @Override
         public void onItemReady() {
+            System.out.printf("[DBG][Server] onItemReady from player %d%n", playerNumber);
             MatchWorld3D w = world;
-            if (w == null || !matchRunning) return;
+            if (w == null || !matchRunning) {
+                System.out.printf("[DBG][Server] onItemReady ignored — world=%s matchRunning=%b%n",
+                    w, matchRunning);
+                return;
+            }
             actions.offer(() -> w.playerReady(playerNumber));
         }
 
