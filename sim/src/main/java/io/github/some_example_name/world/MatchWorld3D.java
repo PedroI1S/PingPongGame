@@ -266,17 +266,21 @@ public final class MatchWorld3D {
                 && ballPos.x >= -TABLE_HALF_WIDTH && ballPos.x <= TABLE_HALF_WIDTH
                 && ballPos.z >= -TABLE_HALF_LENGTH && ballPos.z < 0f;
             if (valid) {
-                // Ball settles on the bot's side and waits there for the bot's reply.
-                ballVel.x = 0f;
-                ballVel.z = 0f;
                 ballVel.y = -ballVel.y * BOUNCE_RESTITUTION;
                 tableBounceEvent = true;
                 spawnBounceSparks(ballPos.x, TABLE_TOP_Y, ballPos.z);
+                if (matchMode != MatchMode.PVP) {
+                    // BOT mode: freeze horizontal movement so the AI can "settle" the ball.
+                    ballVel.x = 0f;
+                    ballVel.z = 0f;
+                }
                 phase = Phase.BOT_RESOLVE;
                 phaseTimer = matchMode == MatchMode.PVP
                     ? GameConfig.NET_CLIENT_MISS_TIMEOUT
                     : GameConfig.BOT_RESPONSE_DELAY;
-                statusText = "Clean return. Bot is trying to answer.";
+                statusText = matchMode == MatchMode.PVP
+                    ? "P2 — return the ball!"
+                    : "Clean return. Bot is trying to answer.";
             } else {
                 handlePlayerFault("Out of bounds! Try a more centred shot.");
             }
