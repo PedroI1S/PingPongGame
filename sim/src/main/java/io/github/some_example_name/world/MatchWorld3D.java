@@ -314,6 +314,18 @@ public final class MatchWorld3D {
         // Keep simulating the small residual bounce so the ball doesn't snap.
         ballVel.y -= GRAVITY * delta;
         ballPos.mulAdd(ballVel, delta);
+
+        // PVP: ball keeps its horizontal velocity (not frozen). Score the point
+        // immediately if it leaves the playable area rather than waiting for the timer.
+        if (matchMode == MatchMode.PVP) {
+            if (ballPos.z < -TABLE_HALF_LENGTH - 2f
+                || Math.abs(ballPos.x) > TABLE_HALF_WIDTH + 4f
+                || ballPos.y < 0f) {
+                clientMiss();
+                return;
+            }
+        }
+
         if (ballPos.y <= TABLE_TOP_Y + BALL_RADIUS && ballVel.y < 0f) {
             ballPos.y = TABLE_TOP_Y + BALL_RADIUS;
             if (Math.abs(ballVel.y) < 0.5f) {
@@ -356,8 +368,8 @@ public final class MatchWorld3D {
 
     private float itemPhaseLogTimer = 0f;
     private void updateItemPhase(float delta) {
-        player.tickPunchTimer(delta);
-        bot.tickPunchTimer(delta);
+        // Punch timers must NOT tick during item selection — the effect should
+        // only count down while the rally is actually in progress.
         phaseTimer -= delta;
         itemPhaseLogTimer -= delta;
         if (itemPhaseLogTimer <= 0f) {
@@ -567,6 +579,8 @@ public final class MatchWorld3D {
      * Authoritative click for P1: serve when allowed, otherwise return the ball.
      */
     public boolean handlePlayerClick(Ray pickRay) {
+        // Always let P1 swat flies on their side first.
+        if (!p1Effects.flies.isEmpty() && trySwatFly(pickRay, 1) >= 0) return true;
         if (phase == Phase.PREPARE_SERVE && nextServer == 1) {
             return tryPlayerServe();
         }
@@ -578,6 +592,8 @@ public final class MatchWorld3D {
      */
     public boolean handleOpponentClick(Ray pickRay) {
         if (matchMode != MatchMode.PVP) return false;
+        // Always let P2 swat flies on their side first.
+        if (!p2Effects.flies.isEmpty() && trySwatFly(pickRay, 2) >= 0) return true;
         if (phase == Phase.PREPARE_SERVE && nextServer == 2) {
             return tryClientServe();
         }

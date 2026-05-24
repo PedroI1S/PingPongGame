@@ -61,6 +61,11 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     private final List<ItemType> myItems  = new ArrayList<>();
     private final List<ItemType> oppItems = new ArrayList<>();
     private boolean itemReadySent;
+    /**
+     * True when an opponent PUNCH was applied while in item selection.
+     * The blur is deferred so it only starts when the rally resumes.
+     */
+    private boolean pendingPunchBlur;
 
     // ── Flies ──────────────────────────────────────────────────────────────────
     private final List<FlyState> myFlies  = new ArrayList<>();
@@ -174,7 +179,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             // getPickRay() handles Y-inversion internally, pass raw screen coords.
             com.badlogic.gdx.math.collision.Ray hoverRay =
                 arena.getCamera().getPickRay(netInput.lastMouseX, netInput.lastMouseY);
-            itemPhaseRenderer.updateHover(hoverRay, playerNumber);
+            itemPhaseRenderer.updateHover(hoverRay, 1); // p1Entries = myItems always
             itemPhaseRenderer.update(delta);
             arena.getModelBatch().begin(arena.getCamera());
             itemPhaseRenderer.render(arena.getModelBatch(), arena.getEnvironment());
@@ -303,7 +308,8 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
                 // so we pass raw screen coords (0,0 = top-left from touchDown).
                 com.badlogic.gdx.math.collision.Ray ray = arena.getCamera()
                     .getPickRay(netInput.lastClickX, netInput.lastClickY);
-                ItemType picked = itemPhaseRenderer.pickItem(ray, playerNumber);
+                // p1Entries always holds myItems regardless of absolute player number.
+                ItemType picked = itemPhaseRenderer.pickItem(ray, 1);
                 if (picked != null) {
                     Gdx.app.log("DBG", "[Client] item picked: " + picked + " → sendUseItem");
                     if (conn != null) conn.sendUseItem(picked.getId());
@@ -360,6 +366,10 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         if (ap != 0) {
             Gdx.app.postRunnable(() -> {
                 Gdx.app.log("DBG", "[Client] GL: clearing inItemPhase (ap≠0 from STATE)  was=" + inItemPhase);
+                if (inItemPhase && pendingPunchBlur) {
+                    punchTimer = 10f;
+                    pendingPunchBlur = false;
+                }
                 inItemPhase = false;
                 itemReadySent = false;
             });
@@ -412,8 +422,9 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             roundOverlayTimer = 2.5f;
             p1lives = GameConfig.DEFAULT_LIVES;
             p2lives = GameConfig.DEFAULT_LIVES;
-            inItemPhase   = false;
-            itemReadySent = false;
+            inItemPhase      = false;
+            itemReadySent    = false;
+            pendingPunchBlur = false;
             myItems.clear();
             oppItems.clear();
             myFlies.clear();
@@ -448,8 +459,18 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             if (t == null) return;
             List<ItemType> inv = (byPlayer == playerNumber) ? myItems : oppItems;
             inv.remove(t);
-            if (itemPhaseRenderer != null) itemPhaseRenderer.markUsed(byPlayer, t);
-            if (t == ItemType.PUNCH && byPlayer != playerNumber) punchTimer = 10f;
+            if (itemPhaseRenderer != null) {
+                // Remap to 1=my-items, 2=opp-items so P2 clients address the right entry array.
+                itemPhaseRenderer.markUsed(byPlayer == playerNumber ? 1 : 2, t);
+            }
+            if (t == ItemType.PUNCH && byPlayer != playerNumber) {
+                // Defer the punch blur so it only starts when the rally actually begins.
+                if (inItemPhase) {
+                    pendingPunchBlur = true;
+                } else {
+                    punchTimer = 10f;
+                }
+            }
         });
     }
 
