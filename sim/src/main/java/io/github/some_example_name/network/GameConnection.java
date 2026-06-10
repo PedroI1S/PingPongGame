@@ -47,6 +47,15 @@ public final class GameConnection {
         default void onSfx(int sfxType)                                           {}
         /** @param matchModeWire {@link PacketType#MODE_PVP} or {@link PacketType#MODE_BOT} */
         default void onMatchReady(int matchModeWire)                              {}
+        // Item phase — Server → Client
+        default void onRoundOver(int winner, int p1Wins, int p2Wins) {}
+        default void onItemDealt(int playerNumber, byte[] itemIds)   {}
+        default void onItemUsed(int playerNumber, int itemId)        {}
+        default void onFlySpawn(float[] xs, float[] zs)              {}
+        default void onFlyKilled(int flyIndex)                       {}
+        // Item phase — Client → Server
+        default void onItemReady()                                   {}
+        default void onUseItem(int itemId)                           {}
         // Client → Server
         default void onHello()                                                    {}
         default void onJoin(int matchModeWire)                                    {}
@@ -174,6 +183,40 @@ public final class GameConnection {
                         int mode = in.readByte() & 0xFF;
                         dispatch.execute(() -> listener.onMatchReady(mode));
                     }
+                    case PacketType.ROUND_OVER -> {
+                        int winner = in.readByte() & 0xFF;
+                        int p1w    = in.readByte() & 0xFF;
+                        int p2w    = in.readByte() & 0xFF;
+                        dispatch.execute(() -> listener.onRoundOver(winner, p1w, p2w));
+                    }
+                    case PacketType.ITEM_DEALT -> {
+                        int pn    = in.readByte() & 0xFF;
+                        int count = in.readByte() & 0xFF;
+                        byte[] ids = new byte[count];
+                        in.readFully(ids);
+                        dispatch.execute(() -> listener.onItemDealt(pn, ids));
+                    }
+                    case PacketType.ITEM_USED -> {
+                        int pn = in.readByte() & 0xFF;
+                        int id = in.readByte() & 0xFF;
+                        dispatch.execute(() -> listener.onItemUsed(pn, id));
+                    }
+                    case PacketType.FLY_SPAWN -> {
+                        int count  = in.readByte() & 0xFF;
+                        float[] xs = new float[count];
+                        float[] zs = new float[count];
+                        for (int i = 0; i < count; i++) { xs[i] = in.readFloat(); zs[i] = in.readFloat(); }
+                        dispatch.execute(() -> listener.onFlySpawn(xs, zs));
+                    }
+                    case PacketType.FLY_KILLED -> {
+                        int idx = in.readByte() & 0xFF;
+                        dispatch.execute(() -> listener.onFlyKilled(idx));
+                    }
+                    case PacketType.ITEM_READY -> dispatch.execute(() -> listener.onItemReady());
+                    case PacketType.USE_ITEM -> {
+                        int id = in.readByte() & 0xFF;
+                        dispatch.execute(() -> listener.onUseItem(id));
+                    }
                     case PacketType.HELLO -> dispatch.execute(() -> listener.onHello());
                     case PacketType.JOIN -> {
                         int mode = in.readByte() & 0xFF;
@@ -242,6 +285,44 @@ public final class GameConnection {
         write(() -> { out.writeByte(PacketType.MATCH_READY); out.writeByte(matchModeWire); });
     }
 
+    public void sendRoundOver(int winner, int p1Wins, int p2Wins) {
+        write(() -> {
+            out.writeByte(PacketType.ROUND_OVER);
+            out.writeByte(winner);
+            out.writeByte(p1Wins);
+            out.writeByte(p2Wins);
+        });
+    }
+
+    public void sendItemDealt(int playerNumber, byte[] itemIds) {
+        write(() -> {
+            out.writeByte(PacketType.ITEM_DEALT);
+            out.writeByte(playerNumber);
+            out.writeByte(itemIds.length);
+            out.write(itemIds);
+        });
+    }
+
+    public void sendItemUsed(int playerNumber, int itemId) {
+        write(() -> {
+            out.writeByte(PacketType.ITEM_USED);
+            out.writeByte(playerNumber);
+            out.writeByte(itemId);
+        });
+    }
+
+    public void sendFlySpawn(float[] xs, float[] zs) {
+        write(() -> {
+            out.writeByte(PacketType.FLY_SPAWN);
+            out.writeByte(xs.length);
+            for (int i = 0; i < xs.length; i++) { out.writeFloat(xs[i]); out.writeFloat(zs[i]); }
+        });
+    }
+
+    public void sendFlyKilled(int flyIndex) {
+        write(() -> { out.writeByte(PacketType.FLY_KILLED); out.writeByte(flyIndex); });
+    }
+
     // ── Send — Client → Server ────────────────────────────────────────────────
 
     public void sendHello() {
@@ -275,6 +356,14 @@ public final class GameConnection {
 
     public void sendBye() {
         write(() -> out.writeByte(PacketType.BYE));
+    }
+
+    public void sendItemReady() {
+        write(() -> out.writeByte(PacketType.ITEM_READY));
+    }
+
+    public void sendUseItem(byte itemId) {
+        write(() -> { out.writeByte(PacketType.USE_ITEM); out.writeByte(itemId); });
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────

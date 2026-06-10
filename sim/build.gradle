@@ -3,8 +3,14 @@ eclipse.project.name = appName + '-sim'
 
 dependencies {
   api "com.badlogicgames.gdx:gdx:$gdxVersion"
+  testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+  testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 jar {
   duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+test {
+  useJUnitPlatform()
 }

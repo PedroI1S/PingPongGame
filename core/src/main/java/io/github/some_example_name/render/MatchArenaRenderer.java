@@ -14,13 +14,16 @@ import com.badlogic.gdx.graphics.g3d.ModelBatch;
 import com.badlogic.gdx.graphics.g3d.ModelInstance;
 import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
+import com.badlogic.gdx.graphics.g3d.loader.ObjLoader;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
+import com.badlogic.gdx.math.collision.BoundingBox;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Disposable;
 import com.badlogic.gdx.utils.ScreenUtils;
 import io.github.some_example_name.config.GameConfig;
+import io.github.some_example_name.world.FlyState;
 import io.github.some_example_name.world.ImpactParticle3D;
 import io.github.some_example_name.world.MatchWorld3D;
 
@@ -44,6 +47,21 @@ public final class MatchArenaRenderer implements Disposable {
     private Environment environment;
 
     private Model tableModel, netModel, ballModel, floorModel;
+    private Model flyModel;
+
+    /** Optional OBJ ball model (Meshy fingerprint egg). Null ⇒ procedural sphere. */
+    private Model eggBallModel;
+    private boolean usingEggBall;
+    private float eggScale = 1f;
+    private final Vector3 eggCenter = new Vector3();
+
+    /** Optional OBJ table model (Meshy abandoned table). Null ⇒ procedural box. */
+    private Model tableObjModel;
+    /** Vertical nudge for the table surface (world units, +up). Tunable. */
+    private static final float TABLE_MODEL_Y_TRIM = 0f;
+    private final com.badlogic.gdx.utils.Array<ModelInstance> flyInstances = new com.badlogic.gdx.utils.Array<>();
+    private float flyBuzzTimer;
+
     private ModelInstance tableInstance, netInstance, ballInstance, floorInstance;
 
     private final Vector3 worldToScreen = new Vector3();
@@ -81,6 +99,9 @@ public final class MatchArenaRenderer implements Disposable {
         return camera3D;
     }
 
+    public ModelBatch getModelBatch() { ensureInitialized(); return modelBatch; }
+    public Environment getEnvironment() { ensureInitialized(); return environment; }
+
     public ModelInstance getBallInstance() {
         ensureInitialized();
         return ballInstance;
@@ -107,14 +128,41 @@ public final class MatchArenaRenderer implements Disposable {
         if (ballVisible) {
             modelBatch.render(ballInstance, environment);
         }
+        for (ModelInstance fi : flyInstances) modelBatch.render(fi, environment);
         modelBatch.end();
         Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
     }
 
     public void setBallPosition(float x, float y, float z) {
         ensureInitialized();
-        ballInstance.transform.setToTranslation(x, y, z);
+        if (usingEggBall) {
+            // translate to ball pos, scale to ball size, then re-centre the mesh
+            ballInstance.transform.idt();
+            ballInstance.transform.translate(x, y, z);
+            ballInstance.transform.scale(eggScale, eggScale, eggScale);
+            ballInstance.transform.translate(-eggCenter.x, -eggCenter.y, -eggCenter.z);
+        } else {
+            ballInstance.transform.setToTranslation(x, y, z);
+        }
     }
+
+    public void setFlies(java.util.List<FlyState> playerFlies, java.util.List<FlyState> oppFlies) {
+        flyInstances.clear();
+        addFlyInstances(playerFlies);
+        addFlyInstances(oppFlies);
+    }
+
+    private void addFlyInstances(java.util.List<FlyState> flies) {
+        for (FlyState fly : flies) {
+            if (!fly.alive) continue;
+            ModelInstance inst = new ModelInstance(flyModel);
+            float buzz = com.badlogic.gdx.math.MathUtils.sin(flyBuzzTimer * 8f) * 0.08f;
+            inst.transform.setToTranslation(fly.x, MatchWorld3D.TABLE_TOP_Y + 0.4f + buzz, fly.z);
+            flyInstances.add(inst);
+        }
+    }
+
+    public void tickFlyBuzz(float delta) { flyBuzzTimer += delta; }
 
     /**
      * Maps screen cursor to table-top (x, z). Returns {@link Vector2} with NaN if miss.
@@ -178,9 +226,12 @@ public final class MatchArenaRenderer implements Disposable {
     public void dispose() {
         if (modelBatch != null) modelBatch.dispose();
         if (tableModel != null) tableModel.dispose();
+        if (tableObjModel != null) tableObjModel.dispose();
         if (netModel != null) netModel.dispose();
         if (ballModel != null) ballModel.dispose();
+        if (eggBallModel != null) eggBallModel.dispose();
         if (floorModel != null) floorModel.dispose();
+        if (flyModel != null) flyModel.dispose();
     }
 
     private void projectToHud(float wx, float wy, float wz) {
@@ -217,6 +268,7 @@ public final class MatchArenaRenderer implements Disposable {
         );
         tableInstance = new ModelInstance(tableModel);
         tableInstance.transform.setToTranslation(0f, MatchWorld3D.TABLE_TOP_Y - 0.1f, 0f);
+        loadTableModel(); // swaps tableInstance for the Meshy model when available
 
         netModel = mb.createBox(
             MatchWorld3D.TABLE_HALF_WIDTH * 2f + 0.6f,
@@ -235,6 +287,12 @@ public final class MatchArenaRenderer implements Disposable {
             attrs
         );
         ballInstance = new ModelInstance(ballModel);
+        loadEggBall(); // swaps ballInstance for the Meshy egg mesh when available
+
+        float fd = FlyState.FLY_RADIUS * 1.5f;
+        flyModel = mb.createSphere(fd, fd, fd, 6, 6,
+            new Material(ColorAttribute.createDiffuse(new Color(0.15f, 0.15f, 0.05f, 1f))),
+            Usage.Position | Usage.Normal);
 
         floorModel = mb.createBox(60f, 0.4f, 60f,
             new Material(ColorAttribute.createDiffuse(Color.valueOf("0E2026"))),
@@ -242,5 +300,88 @@ public final class MatchArenaRenderer implements Disposable {
         );
         floorInstance = new ModelInstance(floorModel);
         floorInstance.transform.setToTranslation(0f, -0.2f, 0f);
+    }
+
+    /**
+     * Tries to load the Meshy fingerprint-egg OBJ and use it as the ball. The
+     * mesh is auto-scaled so its longest axis matches the ball diameter and
+     * re-centred on the ball position. On any failure the procedural sphere
+     * built above stays in place, so the game always has a ball.
+     */
+    private void loadEggBall() {
+        try {
+            Model loaded = new ObjLoader().loadModel(Gdx.files.internal("models/egg/egg.obj"));
+            if (loaded == null || loaded.meshes.size == 0) {
+                if (loaded != null) loaded.dispose();
+                return;
+            }
+            eggBallModel = loaded;
+            // The .mtl carries no Kd line; force diffuse to white so the baked
+            // map_Kd texture shows (texture × white) instead of × default black.
+            for (Material mat : eggBallModel.materials) {
+                ColorAttribute diff = (ColorAttribute) mat.get(ColorAttribute.Diffuse);
+                if (diff != null) diff.color.set(Color.WHITE);
+                else mat.set(ColorAttribute.createDiffuse(Color.WHITE));
+            }
+            BoundingBox bb = new BoundingBox();
+            eggBallModel.calculateBoundingBox(bb);
+            bb.getCenter(eggCenter);
+            float maxDim = Math.max(bb.getWidth(), Math.max(bb.getHeight(), bb.getDepth()));
+            eggScale = (MatchWorld3D.BALL_RADIUS * 2f) / Math.max(1e-4f, maxDim);
+            ballInstance = new ModelInstance(eggBallModel);
+            usingEggBall = true;
+        } catch (Throwable t) {
+            // Corrupt/unsupported OBJ, missing texture, etc. — keep the sphere.
+            Gdx.app.error("MatchArenaRenderer", "Egg ball model failed to load; using sphere", t);
+            if (eggBallModel != null) { eggBallModel.dispose(); eggBallModel = null; }
+            usingEggBall = false;
+        }
+    }
+
+    /**
+     * Tries to load the Meshy abandoned-table OBJ and use it instead of the
+     * procedural box. The model's native long axis is X, while the playfield is
+     * long on Z, so it is turned 90° about Y and anisotropically fit to the
+     * 6×14 playfield with its top surface at {@link MatchWorld3D#TABLE_TOP_Y}.
+     * Any failure keeps the procedural box. The procedural net is left in place.
+     */
+    private void loadTableModel() {
+        try {
+            Model loaded = new ObjLoader().loadModel(Gdx.files.internal("models/table/table.obj"));
+            if (loaded == null || loaded.meshes.size == 0) {
+                if (loaded != null) loaded.dispose();
+                return;
+            }
+            tableObjModel = loaded;
+            for (Material mat : tableObjModel.materials) {
+                ColorAttribute d = (ColorAttribute) mat.get(ColorAttribute.Diffuse);
+                if (d != null) d.color.set(Color.WHITE);
+                else mat.set(ColorAttribute.createDiffuse(Color.WHITE));
+            }
+            BoundingBox bb = new BoundingBox();
+            tableObjModel.calculateBoundingBox(bb);
+            Vector3 center = bb.getCenter(new Vector3());
+            float modelW = Math.max(1e-4f, bb.getWidth());   // local x — long axis → world length (z)
+            float modelH = Math.max(1e-4f, bb.getHeight());  // local y — height
+            float modelD = Math.max(1e-4f, bb.getDepth());   // local z → world width (x)
+            // UNIFORM scale keeps the model's real volume/proportions. Fit to
+            // whichever playfield axis needs the larger blow-up so the table at
+            // least covers the 6×14 surface (the rest overhangs, reads fine).
+            float s = Math.max(
+                (MatchWorld3D.TABLE_HALF_LENGTH * 2f) / modelW,
+                (MatchWorld3D.TABLE_HALF_WIDTH  * 2f) / modelD);
+            float halfH = modelH * s * 0.5f;
+            ModelInstance inst = new ModelInstance(tableObjModel);
+            inst.transform.idt();
+            // bbox top (the play surface) sits at TABLE_TOP_Y; body/legs hang below
+            inst.transform.translate(0f, MatchWorld3D.TABLE_TOP_Y - halfH + TABLE_MODEL_Y_TRIM, 0f);
+            inst.transform.rotate(0f, 1f, 0f, 90f);
+            inst.transform.scale(s, s, s);
+            inst.transform.translate(-center.x, -center.y, -center.z);
+            tableInstance = inst;
+        } catch (Throwable t) {
+            Gdx.app.error("MatchArenaRenderer", "Table model failed to load; using procedural box", t);
+            if (tableObjModel != null) { tableObjModel.dispose(); tableObjModel = null; }
+        }
     }
 }

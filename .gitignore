@@ -16,6 +16,7 @@ gradle-app.setting
 /headless/build/
 /server/build/
 /shared/build/
+/sim/build/
 
 ## Java:
 *.class

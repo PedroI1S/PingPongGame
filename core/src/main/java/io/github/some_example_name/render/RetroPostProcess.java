@@ -59,6 +59,7 @@ public final class RetroPostProcess implements Disposable {
     private float dither      = 0.06f;
     private float vignette    = 0.55f;
     private float warm        = 0.18f;
+    private float punchBlur;
 
     // ── Internals ─────────────────────────────────────────────────────────────
 
@@ -147,6 +148,7 @@ public final class RetroPostProcess implements Disposable {
         shader.setUniformf("u_dither",     dither);
         shader.setUniformf("u_vignette",   vignette);
         shader.setUniformf("u_warm",       warm);
+        shader.setUniformf("u_blur",       punchBlur);
         shader.setUniform3fv("u_palette[0]", PALETTE_RGB, 0, PALETTE_RGB.length);
 
         Texture tex = fbo.getColorBufferTexture();
@@ -193,6 +195,7 @@ public final class RetroPostProcess implements Disposable {
     public void setDither(float d)          { this.dither = d; }
     public void setVignette(float v)        { this.vignette = v; }
     public void setWarm(float w)            { this.warm = w; }
+    public void setPunchBlur(float t)       { this.punchBlur = Math.max(0f, Math.min(1f, t)); }
 
     @Override
     public void dispose() {

@@ -15,11 +15,16 @@ import io.github.some_example_name.Main;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.config.Palette;
 import io.github.some_example_name.core.GameSession;
+import io.github.some_example_name.model.ItemType;
 import io.github.some_example_name.network.GameConnection;
 import io.github.some_example_name.network.PacketType;
+import io.github.some_example_name.render.ItemPhaseRenderer;
 import io.github.some_example_name.render.MatchArenaRenderer;
+import io.github.some_example_name.world.FlyState;
 import io.github.some_example_name.world.ImpactParticle3D;
 import io.github.some_example_name.world.MatchWorld3D;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Server-authoritative networked match screen.
@@ -49,6 +54,29 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
     private boolean disconnected;
     private boolean waitingForOpponent;
+
+    // ── Item phase ─────────────────────────────────────────────────────────────
+    private boolean inItemPhase;
+    private ItemPhaseRenderer itemPhaseRenderer;
+    private final List<ItemType> myItems  = new ArrayList<>();
+    private final List<ItemType> oppItems = new ArrayList<>();
+    private boolean itemReadySent;
+    /**
+     * True when an opponent PUNCH was applied while in item selection.
+     * The blur is deferred so it only starts when the rally resumes.
+     */
+    private boolean pendingPunchBlur;
+
+    // ── Flies ──────────────────────────────────────────────────────────────────
+    private final List<FlyState> myFlies  = new ArrayList<>();
+    private final List<FlyState> oppFlies = new ArrayList<>();
+
+    // ── Punch blur ─────────────────────────────────────────────────────────────
+    private float punchTimer;
+
+    // ── Round overlay ──────────────────────────────────────────────────────────
+    private String roundOverlayText;
+    private float  roundOverlayTimer;
 
     private MatchArenaRenderer arena;
 
@@ -99,6 +127,10 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         }
 
         arena.ensureInitialized();
+        if (itemPhaseRenderer == null) {
+            // P1 views from +z, P2 from −z — keep "my items" on the local side.
+            itemPhaseRenderer = new ItemPhaseRenderer(playerNumber == 1);
+        }
         backgroundMusic = context.getAssets().getBackgroundMusic();
         backgroundMusic.setLooping(true);
         // Respect Master × Music settings on (re)entry.  The base 0.25 keeps
@@ -114,6 +146,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     public void hide() {
         Gdx.input.setInputProcessor(null);
         if (backgroundMusic != null) backgroundMusic.stop();
+        if (itemPhaseRenderer != null) { itemPhaseRenderer.dispose(); itemPhaseRenderer = null; }
     }
 
     @Override
@@ -141,7 +174,31 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         context.getPostProcess().begin();
         arena.render3DScene(ballVisible);
 
+        // Render item cubes in 3D (uses a fresh modelBatch begin/end)
+        if (inItemPhase && itemPhaseRenderer != null) {
+            // Update hover state from current mouse position each frame.
+            // getPickRay() handles Y-inversion internally, pass raw screen coords.
+            com.badlogic.gdx.math.collision.Ray hoverRay =
+                arena.getCamera().getPickRay(netInput.lastMouseX, netInput.lastMouseY);
+            itemPhaseRenderer.updateHover(hoverRay, 1); // p1Entries = myItems always
+            itemPhaseRenderer.update(delta);
+            arena.getModelBatch().begin(arena.getCamera());
+            itemPhaseRenderer.render(arena.getModelBatch(), arena.getEnvironment());
+            arena.getModelBatch().end();
+        }
+        // Fly buzz animation
+        if (arena != null) arena.tickFlyBuzz(delta);
+
         context.getViewport().apply(true);
+
+        // Punch blur
+        if (punchTimer > 0f) {
+            punchTimer -= delta;
+            context.getPostProcess().setPunchBlur(punchTimer / 10f);
+        } else {
+            context.getPostProcess().setPunchBlur(0f);
+        }
+
         SpriteBatch batch = context.getBatch();
         batch.setProjectionMatrix(context.getViewport().getCamera().combined);
         batch.begin();
@@ -150,6 +207,20 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         drawHud(batch);
         if (matchOver)    drawOutcomeOverlay(batch);
         if (disconnected) drawDisconnectOverlay(batch);
+        // Item phase READY button
+        if (inItemPhase) {
+            String readyLabel = itemReadySent ? "WAITING..." : "[ READY ]";
+            context.getBodyFont().setColor(Palette.TEXT);
+            drawCentered(batch, context.getBodyFont(), readyLabel,
+                GameConfig.WORLD_WIDTH * 0.5f, 60f, Palette.TEXT);
+        }
+        // Round overlay
+        if (roundOverlayTimer > 0f) {
+            roundOverlayTimer -= delta;
+            context.getTitleFont().setColor(Palette.TEXT);
+            drawCentered(batch, context.getTitleFont(), roundOverlayText,
+                GameConfig.WORLD_WIDTH * 0.5f, GameConfig.WORLD_HEIGHT * 0.5f, Palette.TEXT);
+        }
         batch.end();
 
         context.getPostProcess().endAndBlit();
@@ -228,9 +299,35 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     }
 
     private void handleClick() {
-        if (activePlayer != playerNumber) return;
-        if (conn == null) return;
+        // During item phase: intercept all clicks
+        if (inItemPhase) {
+            if (itemPhaseRenderer != null && arena != null) {
+                // Ray-test against item cubes first.
+                // getPickRay() already inverts Y internally via Camera.unproject(),
+                // so we pass raw screen coords (0,0 = top-left from touchDown).
+                com.badlogic.gdx.math.collision.Ray ray = arena.getCamera()
+                    .getPickRay(netInput.lastClickX, netInput.lastClickY);
+                // p1Entries always holds myItems regardless of absolute player number.
+                ItemType picked = itemPhaseRenderer.pickItem(ray, 1);
+                if (picked != null) {
+                    if (conn != null) conn.sendUseItem(picked.getId());
+                    return; // consumed by item use
+                }
+            }
+            // Click hit nothing — treat as READY
+            if (!itemReadySent) {
+                itemReadySent = true;
+                inItemPhase = false;
+                if (conn != null) conn.sendItemReady();
+            }
+            return; // consume — no CLICK sent to server during ITEM_PHASE
+        }
 
+        // Normal gameplay click — always forward to the server, which is the
+        // authority: it decides whether the click swats a fly, serves, returns
+        // the ball, or is a no-op. Gating on activePlayer here would suppress
+        // fly-swat clicks, which are valid even when it is not your turn to hit.
+        if (conn == null) return;
         conn.sendClick(
             netInput.lastClickX,
             netInput.lastClickY,
@@ -258,6 +355,19 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
                         int p1l, int p2l,
                         boolean visible, int ap) {
         waitingForOpponent = false;
+        // ap==0 only during ITEM_PHASE; any other value means server has moved on.
+        // Queue on GL thread so it runs AFTER any pending onItemDealt postRunnables,
+        // ensuring the clear wins the race against a late-arriving deal notification.
+        if (ap != 0) {
+            Gdx.app.postRunnable(() -> {
+                if (inItemPhase && pendingPunchBlur) {
+                    punchTimer = 10f;
+                    pendingPunchBlur = false;
+                }
+                inItemPhase = false;
+                itemReadySent = false;
+            });
+        }
         snapBallPos.set(px, py, pz);
         snapBallVel.set(vx, vy, vz);
         snapAge      = 0f;
@@ -296,6 +406,82 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             }
             triggerShake(0.10f, 0.10f); // tiny chunk on the bounce thud
         }
+    }
+
+    @Override
+    public void onRoundOver(int winner, int p1Wins, int p2Wins) {
+        Gdx.app.postRunnable(() -> {
+            String who = (playerNumber == winner) ? "YOU WIN THE ROUND" : "OPPONENT WINS THE ROUND";
+            roundOverlayText  = who + "  (" + p1Wins + " - " + p2Wins + ")";
+            roundOverlayTimer = 2.5f;
+            p1lives = GameConfig.DEFAULT_LIVES;
+            p2lives = GameConfig.DEFAULT_LIVES;
+            inItemPhase      = false;
+            itemReadySent    = false;
+            pendingPunchBlur = false;
+            myItems.clear();
+            oppItems.clear();
+            myFlies.clear();
+            oppFlies.clear();
+            punchTimer = 0f;
+        });
+    }
+
+    @Override
+    public void onItemDealt(int forPlayer, byte[] itemIds) {
+        Gdx.app.postRunnable(() -> {
+            List<ItemType> target = (forPlayer == playerNumber) ? myItems : oppItems;
+            for (byte id : itemIds) {
+                ItemType t = ItemType.fromId(id);
+                if (t != null) target.add(t);
+            }
+            inItemPhase   = true;
+            itemReadySent = false;
+            if (itemPhaseRenderer != null) itemPhaseRenderer.load(myItems, oppItems);
+        });
+    }
+
+    @Override
+    public void onItemUsed(int byPlayer, int itemId) {
+        Gdx.app.postRunnable(() -> {
+            ItemType t = ItemType.fromId((byte) itemId);
+            if (t == null) return;
+            List<ItemType> inv = (byPlayer == playerNumber) ? myItems : oppItems;
+            inv.remove(t);
+            if (itemPhaseRenderer != null) {
+                // Remap to 1=my-items, 2=opp-items so P2 clients address the right entry array.
+                itemPhaseRenderer.markUsed(byPlayer == playerNumber ? 1 : 2, t);
+            }
+            if (t == ItemType.PUNCH && byPlayer != playerNumber) {
+                // Defer the punch blur so it only starts when the rally actually begins.
+                if (inItemPhase) {
+                    pendingPunchBlur = true;
+                } else {
+                    punchTimer = 10f;
+                }
+            }
+        });
+    }
+
+    @Override
+    public void onFlySpawn(float[] xs, float[] zs) {
+        Gdx.app.postRunnable(() -> {
+            myFlies.clear();
+            for (int i = 0; i < xs.length; i++) myFlies.add(new FlyState(xs[i], zs[i]));
+            if (arena != null) arena.setFlies(myFlies, oppFlies);
+        });
+    }
+
+    @Override
+    public void onFlyKilled(int flyIndex) {
+        Gdx.app.postRunnable(() -> {
+            if (flyIndex < myFlies.size()) myFlies.get(flyIndex).alive = false;
+            else {
+                int oppIdx = flyIndex - myFlies.size();
+                if (oppIdx < oppFlies.size()) oppFlies.get(oppIdx).alive = false;
+            }
+            if (arena != null) arena.setFlies(myFlies, oppFlies);
+        });
     }
 
     /** Master × SFX volume in [0..1]. */

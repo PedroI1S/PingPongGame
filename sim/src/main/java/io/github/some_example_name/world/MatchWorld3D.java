@@ -8,9 +8,12 @@ import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Pool;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.model.ArenaSide;
+import io.github.some_example_name.model.ItemEffects;
+import io.github.some_example_name.model.ItemType;
 import io.github.some_example_name.model.MatchConfig;
 import io.github.some_example_name.model.MatchMode;
 import io.github.some_example_name.model.MatchOutcome;
+import io.github.some_example_name.model.PlayerInventory;
 
 /**
  * 3D POC version of the duel — physics-driven for both sides.
@@ -35,7 +38,7 @@ public final class MatchWorld3D {
 
     private final Vector3 sanitizedVel = new Vector3();
 
-    public enum Phase { PREPARE_SERVE, INCOMING, OUTGOING, BOT_RESOLVE }
+    public enum Phase { PREPARE_SERVE, INCOMING, OUTGOING, BOT_RESOLVE, ITEM_PHASE }
 
     private MatchMode matchMode = MatchMode.BOT;
 
@@ -44,10 +47,11 @@ public final class MatchWorld3D {
     private final DuelistState player;
     private final DuelistState bot;
 
-    private final Vector3 ballPos  = new Vector3();
-    private final Vector3 ballVel  = new Vector3();
-    private final Vector3 hitPoint = new Vector3();
-    private final Vector3 tmpVel   = new Vector3();
+    private final Vector3 ballPos     = new Vector3();
+    private final Vector3 ballVel     = new Vector3();
+    private final Vector3 prevBallPos = new Vector3();
+    private final Vector3 hitPoint    = new Vector3();
+    private final Vector3 tmpVel      = new Vector3();
 
     private final Array<ImpactParticle3D> particles = new Array<>();
     private final Pool<ImpactParticle3D>  particlePool = new Pool<>() {
@@ -73,6 +77,30 @@ public final class MatchWorld3D {
      * serves the next one; P1 serves the very first point.
      */
     private int nextServer = 1;
+
+    private static final float ITEM_PHASE_TIMEOUT = 15f;
+    private static final int ITEMS_PER_DEAL = 2;
+
+    private final PlayerInventory p1Inventory = new PlayerInventory();
+    private final PlayerInventory p2Inventory = new PlayerInventory();
+    private final ItemEffects p1Effects = new ItemEffects();
+    private final ItemEffects p2Effects = new ItemEffects();
+
+    private boolean p1Ready;
+    private boolean p2Ready;
+
+    private byte[] lastDealtP1 = new byte[0];
+    private byte[] lastDealtP2 = new byte[0];
+
+    private boolean itemUsedEvent;
+    private int itemUsedPlayer;
+    private byte itemUsedId;
+
+    private boolean flySpawnEvent;
+    private float[] flySpawnXs = new float[0];
+    private float[] flySpawnZs = new float[0];
+
+    private int flyKilledIndex = -1;
 
     // Audio events — set true on relevant frames, consumed by the screen.
     private boolean paddleHitEvent;
@@ -101,6 +129,7 @@ public final class MatchWorld3D {
             case INCOMING      -> updateIncoming(delta);
             case OUTGOING      -> updateOutgoing(delta);
             case BOT_RESOLVE   -> updateBotResolve(delta);
+            case ITEM_PHASE    -> updateItemPhase(delta);
         }
     }
 
@@ -169,20 +198,21 @@ public final class MatchWorld3D {
      * at a comfortable click height. Slowed by the player's incoming-time multiplier.
      */
     private void applyBotImpulse() {
-        float speedScale = 1f / Math.max(0.5f, player.getIncomingTimeMultiplier());
+        float speedScale = (1f / Math.max(0.5f, player.getIncomingTimeMultiplier())) * p1Effects.incomingSpeedMultiplier();
         float aim = (random.nextFloat() - 0.5f) * 1.4f;
         ballVel.set(aim, 5.0f, 7.5f * speedScale);
         paddleHitEvent = true;
     }
 
     private void updateIncoming(float delta) {
+        prevBallPos.set(ballPos);
         float prevZ = ballPos.z;
         ballVel.y -= GRAVITY * delta;
         ballPos.mulAdd(ballVel, delta);
 
         if (!crossedNet && prevZ < 0f && ballPos.z >= 0f) {
             crossedNet = true;
-            if (ballPos.y < NET_TOP_Y) { botMissedShot("Bot clips the net. Free point."); return; }
+            if (ballPos.y < NET_TOP_Y) { botMissedShot(); return; } // clipped the net
         }
 
         if (ballPos.y <= TABLE_TOP_Y + BALL_RADIUS && ballVel.y < 0f) {
@@ -196,7 +226,18 @@ public final class MatchWorld3D {
                 spawnBounceSparks(ballPos.x, TABLE_TOP_Y, ballPos.z);
                 if (bouncesOnPlayerSide >= 2) { handlePlayerMiss(); return; }
             } else {
-                botMissedShot("Bot's shot missed the table. Free point.");
+                botMissedShot();
+                return;
+            }
+        }
+
+        // Fly collision — ball hits an unswatted fly on P1's side
+        if (crossedNet && ballPos.z > 0f) {
+            int hit = ballHitsFly(p1Effects.flies);
+            if (hit >= 0) {
+                p1Effects.flies.get(hit).alive = false;
+                flyKilledIndex = hit;
+                handlePlayerFlyHit();
                 return;
             }
         }
@@ -206,13 +247,14 @@ public final class MatchWorld3D {
     }
 
     private void updateOutgoing(float delta) {
+        prevBallPos.set(ballPos);
         float prevZ = ballPos.z;
         ballVel.y -= GRAVITY * delta;
         ballPos.mulAdd(ballVel, delta);
 
         if (!crossedNet && prevZ > 0f && ballPos.z <= 0f) {
             crossedNet = true;
-            if (ballPos.y < NET_TOP_Y) { handlePlayerFault("Into the net! Hit with more lift."); return; }
+            if (ballPos.y < NET_TOP_Y) { handlePlayerMiss(); return; } // into the net
         }
 
         if (ballPos.y <= TABLE_TOP_Y + BALL_RADIUS && ballVel.y < 0f) {
@@ -221,27 +263,42 @@ public final class MatchWorld3D {
                 && ballPos.x >= -TABLE_HALF_WIDTH && ballPos.x <= TABLE_HALF_WIDTH
                 && ballPos.z >= -TABLE_HALF_LENGTH && ballPos.z < 0f;
             if (valid) {
-                // Ball settles on the bot's side and waits there for the bot's reply.
-                ballVel.x = 0f;
-                ballVel.z = 0f;
                 ballVel.y = -ballVel.y * BOUNCE_RESTITUTION;
                 tableBounceEvent = true;
                 spawnBounceSparks(ballPos.x, TABLE_TOP_Y, ballPos.z);
+                if (matchMode != MatchMode.PVP) {
+                    // BOT mode: freeze horizontal movement so the AI can "settle" the ball.
+                    ballVel.x = 0f;
+                    ballVel.z = 0f;
+                }
                 phase = Phase.BOT_RESOLVE;
                 phaseTimer = matchMode == MatchMode.PVP
                     ? GameConfig.NET_CLIENT_MISS_TIMEOUT
                     : GameConfig.BOT_RESPONSE_DELAY;
-                statusText = "Clean return. Bot is trying to answer.";
+                statusText = matchMode == MatchMode.PVP
+                    ? "P2 — return the ball!"
+                    : "Clean return. Bot is trying to answer.";
             } else {
-                handlePlayerFault("Out of bounds! Try a more centred shot.");
+                handlePlayerMiss(); // bounced out of the valid landing zone
             }
             return;
+        }
+
+        // Fly collision — ball hits an unswatted fly on P2's side
+        if (crossedNet && ballPos.z < 0f) {
+            int hit = ballHitsFly(p2Effects.flies);
+            if (hit >= 0) {
+                p2Effects.flies.get(hit).alive = false;
+                flyKilledIndex = hit;
+                handleBotFlyHit();
+                return;
+            }
         }
 
         if (ballPos.y < 0f
             || ballPos.z < -TABLE_HALF_LENGTH - 4f
             || Math.abs(ballPos.x) > TABLE_HALF_WIDTH + 6f) {
-            handlePlayerFault("Out of bounds! Try a more centred shot.");
+            handlePlayerMiss(); // left the playable volume
         }
     }
 
@@ -249,6 +306,18 @@ public final class MatchWorld3D {
         // Keep simulating the small residual bounce so the ball doesn't snap.
         ballVel.y -= GRAVITY * delta;
         ballPos.mulAdd(ballVel, delta);
+
+        // PVP: ball keeps its horizontal velocity (not frozen). Score the point
+        // immediately if it leaves the playable area rather than waiting for the timer.
+        if (matchMode == MatchMode.PVP) {
+            if (ballPos.z < -TABLE_HALF_LENGTH - 2f
+                || Math.abs(ballPos.x) > TABLE_HALF_WIDTH + 4f
+                || ballPos.y < 0f) {
+                clientMiss();
+                return;
+            }
+        }
+
         if (ballPos.y <= TABLE_TOP_Y + BALL_RADIUS && ballVel.y < 0f) {
             ballPos.y = TABLE_TOP_Y + BALL_RADIUS;
             if (Math.abs(ballVel.y) < 0.5f) {
@@ -284,10 +353,27 @@ public final class MatchWorld3D {
                 ballVisible = false;
                 return;
             }
-            nextServer = 1; // player scored — player serves next
-            prepareServe(GameConfig.BETWEEN_POINTS_DELAY,
-                "Bot missed. Click anywhere to serve.");
+            nextServer = 1;
+            enterItemPhase();
         }
+    }
+
+    private void updateItemPhase(float delta) {
+        // Punch timers must NOT tick during item selection — the effect should
+        // only count down while the rally is actually in progress.
+        phaseTimer -= delta;
+        if ((p1Ready && p2Ready) || phaseTimer <= 0f) {
+            p1Ready = false;
+            p2Ready = false;
+            prepareServe(GameConfig.BETWEEN_POINTS_DELAY, buildServeStatusText());
+        }
+    }
+
+    private String buildServeStatusText() {
+        if (matchMode == MatchMode.PVP) {
+            return nextServer == 1 ? "P1 to serve." : "P2 to serve.";
+        }
+        return nextServer == 1 ? "Click anywhere to serve." : "Bot is preparing the opening shot.";
     }
 
     // ── server match API ──────────────────────────────────────────────────────
@@ -389,8 +475,8 @@ public final class MatchWorld3D {
             ballVisible = false;
             return;
         }
-        nextServer = 1; // P1 scored, P1 serves next
-        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, "Opponent missed. P1 serves next.");
+        nextServer = 1;
+        enterItemPhase();
     }
 
     /**
@@ -408,13 +494,13 @@ public final class MatchWorld3D {
     public boolean tryHitBall(Ray pickRay) {
         if (phase != Phase.INCOMING) return false;
         if (ballPos.z < 0f || ballPos.z > TABLE_HALF_LENGTH + 1.5f) return false;
-        if (!HitVelocity.computeFromRay(pickRay, ballPos, player.getTargetScaleMultiplier(),
+        if (!HitVelocity.computeFromRay(pickRay, ballPos, player.getTargetScaleMultiplier() * p1Effects.hitScaleMultiplier(),
                 player.getReturnPowerMultiplier(), true, ballVel, hitPoint, tmpVel)) {
             return false;
         }
 
         tmpVel.set(hitPoint).sub(ballPos);
-        float hitRadius = BALL_RADIUS * player.getTargetScaleMultiplier() * HitVelocity.CLICK_HIT_PADDING;
+        float hitRadius = BALL_RADIUS * player.getTargetScaleMultiplier() * p1Effects.hitScaleMultiplier() * HitVelocity.CLICK_HIT_PADDING;
         float ndx = MathUtils.clamp(tmpVel.x / hitRadius, -1f, 1f);
         float ndy = MathUtils.clamp(tmpVel.y / hitRadius, -1f, 1f);
         float power = (float) Math.sqrt(ndx * ndx + ndy * ndy);
@@ -428,6 +514,25 @@ public final class MatchWorld3D {
         return true;
     }
 
+    public int trySwatFly(Ray pickRay, int playerNumber) {
+        java.util.List<FlyState> flies = playerNumber == 1 ? p1Effects.flies : p2Effects.flies;
+        for (int i = 0; i < flies.size(); i++) {
+            FlyState fly = flies.get(i);
+            if (!fly.alive) continue;
+            float flyY = TABLE_TOP_Y + 0.4f;
+            float ox = pickRay.origin.x - fly.x, oy = pickRay.origin.y - flyY, oz = pickRay.origin.z - fly.z;
+            float dx = pickRay.direction.x, dy = pickRay.direction.y, dz = pickRay.direction.z;
+            float b = 2f * (dx*ox + dy*oy + dz*oz);
+            float c = ox*ox + oy*oy + oz*oz - FlyState.FLY_RADIUS * FlyState.FLY_RADIUS;
+            if (b*b - 4f*c >= 0f) {
+                fly.alive = false;
+                flyKilledIndex = i;
+                return i;
+            }
+        }
+        return -1;
+    }
+
     /**
      * P1's serve (works in both single-player and network mode).
      * Launches the ball from the +z end toward P2 (-z), entering OUTGOING so
@@ -438,7 +543,7 @@ public final class MatchWorld3D {
         if (nextServer != 1) return false;
         float startX = (random.nextFloat() - 0.5f) * TABLE_HALF_WIDTH * 0.6f;
         ballPos.set(startX, TABLE_TOP_Y + 1.2f, TABLE_HALF_LENGTH - 0.5f);
-        ballVel.set(0f, 5.0f, -10f); // toward P2 (−z); lands ~z=−5.4 (deep serve)
+        ballVel.set(0f, 5.0f, -10f * p2Effects.incomingSpeedMultiplier()); // toward P2 (−z); lands ~z=−5.4 (deep serve)
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
@@ -449,13 +554,11 @@ public final class MatchWorld3D {
     }
 
     /**
-     * P2's serve in network mode. Launches the ball from the −z end toward P1 (+z),
-     * entering INCOMING (P1's perspective) so P1 becomes the active player.
-     */
-    /**
      * Authoritative click for P1: serve when allowed, otherwise return the ball.
      */
     public boolean handlePlayerClick(Ray pickRay) {
+        // Always let P1 swat flies on their side first.
+        if (!p1Effects.flies.isEmpty() && trySwatFly(pickRay, 1) >= 0) return true;
         if (phase == Phase.PREPARE_SERVE && nextServer == 1) {
             return tryPlayerServe();
         }
@@ -467,11 +570,13 @@ public final class MatchWorld3D {
      */
     public boolean handleOpponentClick(Ray pickRay) {
         if (matchMode != MatchMode.PVP) return false;
+        // Always let P2 swat flies on their side first.
+        if (!p2Effects.flies.isEmpty() && trySwatFly(pickRay, 2) >= 0) return true;
         if (phase == Phase.PREPARE_SERVE && nextServer == 2) {
             return tryClientServe();
         }
         if (!isClientCanHit()) return false;
-        if (!HitVelocity.computeFromRay(pickRay, ballPos, bot.getTargetScaleMultiplier(),
+        if (!HitVelocity.computeFromRay(pickRay, ballPos, bot.getTargetScaleMultiplier() * p2Effects.hitScaleMultiplier(),
                 bot.getReturnPowerMultiplier(), false, ballVel, hitPoint, tmpVel)) {
             return false;
         }
@@ -484,13 +589,17 @@ public final class MatchWorld3D {
         return true;
     }
 
+    /**
+     * P2's serve in network mode. Launches the ball from the −z end toward P1 (+z),
+     * entering INCOMING (P1's perspective) so P1 becomes the active player.
+     */
     public boolean tryClientServe() {
         if (phase != Phase.PREPARE_SERVE) return false;
         if (nextServer != 2) return false;
         if (matchMode != MatchMode.PVP) return false; // BOT: P2 serves via server AI timer
         float startX = (random.nextFloat() - 0.5f) * TABLE_HALF_WIDTH * 0.6f;
         ballPos.set(startX, TABLE_TOP_Y + 1.2f, -TABLE_HALF_LENGTH + 0.5f);
-        ballVel.set(0f, 5.0f, 10f); // toward P1 (+z)
+        ballVel.set(0f, 5.0f, 10f * p1Effects.incomingSpeedMultiplier()); // toward P1 (+z)
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
@@ -508,24 +617,11 @@ public final class MatchWorld3D {
             ballVisible = false;
             return;
         }
-        nextServer = 2; // P2 (bot) scored — they serve next
-        prepareServe(GameConfig.BETWEEN_POINTS_DELAY,
-            "You missed the shot. Opponent serves next.");
+        nextServer = 2;
+        enterItemPhase();
     }
 
-    private void handlePlayerFault(String text) {
-        player.loseLife();
-        if (player.getLives() <= 0) {
-            outcome = MatchOutcome.BOT_WIN;
-            statusText = "The shot got through.";
-            ballVisible = false;
-            return;
-        }
-        nextServer = 2; // P2 (bot) scored
-        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, text + " Opponent serves next.");
-    }
-
-    private void botMissedShot(String text) {
+    private void botMissedShot() {
         bot.loseLife();
         if (bot.getLives() <= 0) {
             outcome = MatchOutcome.PLAYER_WIN;
@@ -533,8 +629,64 @@ public final class MatchWorld3D {
             ballVisible = false;
             return;
         }
-        nextServer = 1; // P1 scored
-        prepareServe(GameConfig.BETWEEN_POINTS_DELAY, text + " Click anywhere to serve.");
+        nextServer = 1;
+        enterItemPhase();
+    }
+
+    private void handlePlayerFlyHit() {
+        player.loseLife();
+        if (player.getLives() <= 0) {
+            outcome = MatchOutcome.BOT_WIN; ballVisible = false; return;
+        }
+        nextServer = 2;
+        enterItemPhase();
+    }
+
+    private void handleBotFlyHit() {
+        bot.loseLife();
+        if (bot.getLives() <= 0) {
+            outcome = MatchOutcome.PLAYER_WIN; ballVisible = false; return;
+        }
+        nextServer = 1;
+        enterItemPhase();
+    }
+
+    /**
+     * Swept ball-vs-fly test for this frame. Returns the index of the first live
+     * fly the ball's travel segment ({@link #prevBallPos} → {@link #ballPos})
+     * passes within {@code FLY_RADIUS + BALL_RADIUS} of, or {@code -1} for none.
+     *
+     * <p>Using the swept segment (not just the endpoint) stops a fast ball from
+     * tunnelling between 60 Hz steps, and the combined radius makes a visual
+     * overlap actually register as a hit.</p>
+     */
+    private int ballHitsFly(java.util.List<FlyState> flies) {
+        final float flyY = TABLE_TOP_Y + 0.4f;
+        final float reach = FlyState.FLY_RADIUS + BALL_RADIUS;
+        final float reach2 = reach * reach;
+        for (int i = 0; i < flies.size(); i++) {
+            FlyState fly = flies.get(i);
+            if (!fly.alive) continue;
+            float d2 = distSqPointToSegment(fly.x, flyY, fly.z,
+                prevBallPos.x, prevBallPos.y, prevBallPos.z,
+                ballPos.x, ballPos.y, ballPos.z);
+            if (d2 < reach2) return i;
+        }
+        return -1;
+    }
+
+    /** Squared distance from point P to segment AB (clamped to the segment). */
+    static float distSqPointToSegment(float px, float py, float pz,
+                                      float ax, float ay, float az,
+                                      float bx, float by, float bz) {
+        float abx = bx - ax, aby = by - ay, abz = bz - az;
+        float apx = px - ax, apy = py - ay, apz = pz - az;
+        float abLen2 = abx * abx + aby * aby + abz * abz;
+        float t = abLen2 > 1e-8f ? (apx * abx + apy * aby + apz * abz) / abLen2 : 0f;
+        t = MathUtils.clamp(t, 0f, 1f);
+        float cx = ax + abx * t, cy = ay + aby * t, cz = az + abz * t;
+        float dx = px - cx, dy = py - cy, dz = pz - cz;
+        return dx * dx + dy * dy + dz * dz;
     }
 
     private float computeBotReturnChance() {
@@ -557,6 +709,117 @@ public final class MatchWorld3D {
         statusText = status;
         ballVisible = false;
     }
+
+    public void enterItemPhase() {
+        p1Effects.clear();
+        p2Effects.clear();
+        ItemType[] pool = ItemType.values();
+        lastDealtP1 = dealItems(p1Inventory, pool, ITEMS_PER_DEAL);
+        lastDealtP2 = dealItems(p2Inventory, pool, ITEMS_PER_DEAL);
+        p1Ready = false;
+        p2Ready = false;
+        phase = Phase.ITEM_PHASE;
+        ballVisible = false;
+        phaseTimer = ITEM_PHASE_TIMEOUT;
+        statusText = "Use your items, then press READY.";
+    }
+
+    private byte[] dealItems(PlayerInventory inv, ItemType[] pool, int count) {
+        java.util.List<Byte> dealt = new java.util.ArrayList<>();
+        for (int i = 0; i < count; i++) {
+            ItemType item = pool[random.nextInt(pool.length)];
+            if (inv.add(item)) dealt.add(item.getId());
+        }
+        byte[] arr = new byte[dealt.size()];
+        for (int i = 0; i < arr.length; i++) arr[i] = dealt.get(i);
+        return arr;
+    }
+
+    public void playerReady(int playerNumber) {
+        if (phase != Phase.ITEM_PHASE) return;
+        if (playerNumber == 1) p1Ready = true;
+        else p2Ready = true;
+        if (p1Ready && p2Ready) {
+            p1Ready = false;
+            p2Ready = false;
+            prepareServe(GameConfig.BETWEEN_POINTS_DELAY, buildServeStatusText());
+        }
+    }
+
+    public boolean applyItem(int playerNumber, ItemType item) {
+        if (phase != Phase.ITEM_PHASE) return false;
+        PlayerInventory inv    = playerNumber == 1 ? p1Inventory : p2Inventory;
+        PlayerInventory oppInv = playerNumber == 1 ? p2Inventory : p1Inventory;
+        DuelistState self      = playerNumber == 1 ? player : bot;
+        DuelistState opp       = playerNumber == 1 ? bot    : player;
+        ItemEffects selfFx     = playerNumber == 1 ? p1Effects : p2Effects;
+        ItemEffects oppFx      = playerNumber == 1 ? p2Effects : p1Effects;
+
+        if (!inv.remove(item)) return false;
+
+        switch (item) {
+            case PATCH_KIT   -> self.addLife(GameConfig.DEFAULT_LIVES);
+            case WIDE_PADDLE -> selfFx.wideClick    = true;
+            case SLOW_MO     -> selfFx.slowIncoming = true;
+            case STEAL       -> { ItemType stolen = oppInv.steal(random);
+                                  if (stolen != null) inv.add(stolen); }
+            case FAST_SERVE  -> oppFx.fastIncoming  = true;
+            case TINY_PADDLE -> oppFx.tinyPaddleActive = true;
+            case PUNCH       -> opp.setPunchTimer(10f);
+            case FLY_BAIT    -> spawnFlies(oppFx, playerNumber == 1 ? -1 : 1);
+            case COIN_FLIP   -> { if (random.nextFloat() < 0.5f) self.loseLife();
+                                  else opp.loseLife(); checkMatchOver(); }
+        }
+
+        itemUsedEvent  = true;
+        itemUsedPlayer = playerNumber;
+        itemUsedId     = item.getId();
+        return true;
+    }
+
+    private void spawnFlies(ItemEffects targetFx, int sideSign) {
+        int count = 2 + (int)(random.nextFloat() * 2); // 2 or 3
+        float[] xs = new float[count];
+        float[] zs = new float[count];
+        for (int i = 0; i < count; i++) {
+            xs[i] = (random.nextFloat() - 0.5f) * TABLE_HALF_WIDTH * 1.6f;
+            zs[i] = sideSign * (2f + random.nextFloat() * 4f);
+            targetFx.flies.add(new FlyState(xs[i], zs[i]));
+        }
+        flySpawnEvent = true;
+        flySpawnXs = xs;
+        flySpawnZs = zs;
+    }
+
+    private void checkMatchOver() {
+        if (player.getLives() <= 0) { outcome = MatchOutcome.BOT_WIN; ballVisible = false; }
+        else if (bot.getLives() <= 0) { outcome = MatchOutcome.PLAYER_WIN; ballVisible = false; }
+    }
+
+    public boolean consumeItemUsedEvent() {
+        boolean v = itemUsedEvent; itemUsedEvent = false; return v;
+    }
+    public int getItemUsedPlayer() { return itemUsedPlayer; }
+    public byte getItemUsedId()    { return itemUsedId; }
+
+    public boolean consumeFlySpawnEvent() {
+        boolean v = flySpawnEvent; flySpawnEvent = false; return v;
+    }
+    public float[] getFlySpawnXs() { return flySpawnXs; }
+    public float[] getFlySpawnZs() { return flySpawnZs; }
+
+    public int consumeFlyKilledIndex() {
+        int v = flyKilledIndex; flyKilledIndex = -1; return v;
+    }
+
+    public byte[] getLastDealtItems(int playerNumber) {
+        return playerNumber == 1 ? lastDealtP1 : lastDealtP2;
+    }
+
+    public PlayerInventory getP1Inventory() { return p1Inventory; }
+    public PlayerInventory getP2Inventory() { return p2Inventory; }
+    public ItemEffects getP1Effects() { return p1Effects; }
+    public ItemEffects getP2Effects() { return p2Effects; }
 
     // ── accessors ────────────────────────────────────────────────────────────
 
