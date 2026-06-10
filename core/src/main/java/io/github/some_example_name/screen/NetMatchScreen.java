@@ -128,7 +128,8 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
         arena.ensureInitialized();
         if (itemPhaseRenderer == null) {
-            itemPhaseRenderer = new ItemPhaseRenderer();
+            // P1 views from +z, P2 from −z — keep "my items" on the local side.
+            itemPhaseRenderer = new ItemPhaseRenderer(playerNumber == 1);
         }
         backgroundMusic = context.getAssets().getBackgroundMusic();
         backgroundMusic.setLooping(true);
@@ -300,8 +301,6 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     private void handleClick() {
         // During item phase: intercept all clicks
         if (inItemPhase) {
-            Gdx.app.log("DBG", "[Client] handleClick in ITEM_PHASE rawY=" + netInput.lastClickY
-                + " itemReadySent=" + itemReadySent + " rendererNull=" + (itemPhaseRenderer == null));
             if (itemPhaseRenderer != null && arena != null) {
                 // Ray-test against item cubes first.
                 // getPickRay() already inverts Y internally via Camera.unproject(),
@@ -311,26 +310,23 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
                 // p1Entries always holds myItems regardless of absolute player number.
                 ItemType picked = itemPhaseRenderer.pickItem(ray, 1);
                 if (picked != null) {
-                    Gdx.app.log("DBG", "[Client] item picked: " + picked + " → sendUseItem");
                     if (conn != null) conn.sendUseItem(picked.getId());
                     return; // consumed by item use
                 }
-                Gdx.app.log("DBG", "[Client] no item hit by ray");
             }
             // Click hit nothing — treat as READY
             if (!itemReadySent) {
-                Gdx.app.log("DBG", "[Client] → sending ITEM_READY, setting inItemPhase=false");
                 itemReadySent = true;
                 inItemPhase = false;
                 if (conn != null) conn.sendItemReady();
-            } else {
-                Gdx.app.log("DBG", "[Client] itemReadySent already true, ignoring click");
             }
             return; // consume — no CLICK sent to server during ITEM_PHASE
         }
 
-        // Normal gameplay click
-        if (activePlayer != playerNumber) return;
+        // Normal gameplay click — always forward to the server, which is the
+        // authority: it decides whether the click swats a fly, serves, returns
+        // the ball, or is a no-op. Gating on activePlayer here would suppress
+        // fly-swat clicks, which are valid even when it is not your turn to hit.
         if (conn == null) return;
         conn.sendClick(
             netInput.lastClickX,
@@ -359,13 +355,11 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
                         int p1l, int p2l,
                         boolean visible, int ap) {
         waitingForOpponent = false;
-        Gdx.app.log("DBG", "[Client] onState ap=" + ap + " vis=" + visible + " inItemPhase=" + inItemPhase);
         // ap==0 only during ITEM_PHASE; any other value means server has moved on.
         // Queue on GL thread so it runs AFTER any pending onItemDealt postRunnables,
         // ensuring the clear wins the race against a late-arriving deal notification.
         if (ap != 0) {
             Gdx.app.postRunnable(() -> {
-                Gdx.app.log("DBG", "[Client] GL: clearing inItemPhase (ap≠0 from STATE)  was=" + inItemPhase);
                 if (inItemPhase && pendingPunchBlur) {
                     punchTimer = 10f;
                     pendingPunchBlur = false;
@@ -435,10 +429,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
     @Override
     public void onItemDealt(int forPlayer, byte[] itemIds) {
-        Gdx.app.log("DBG", "[Client] onItemDealt queued  forPlayer=" + forPlayer + " count=" + itemIds.length);
         Gdx.app.postRunnable(() -> {
-            Gdx.app.log("DBG", "[Client] GL: onItemDealt firing  forPlayer=" + forPlayer
-                + " inItemPhase-before=" + inItemPhase);
             List<ItemType> target = (forPlayer == playerNumber) ? myItems : oppItems;
             for (byte id : itemIds) {
                 ItemType t = ItemType.fromId(id);
@@ -447,8 +438,6 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             inItemPhase   = true;
             itemReadySent = false;
             if (itemPhaseRenderer != null) itemPhaseRenderer.load(myItems, oppItems);
-            Gdx.app.log("DBG", "[Client] GL: onItemDealt done  myItems=" + myItems.size()
-                + " oppItems=" + oppItems.size() + " rendererNull=" + (itemPhaseRenderer == null));
         });
     }
 

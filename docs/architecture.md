@@ -90,18 +90,23 @@ geometry built by `MatchArenaRenderer`.
 runServer:
   bind(serverSocket); onListening.run();
   while (!shutdown) {
-    runOneMatch():
+    runBestOf3():
       MatchLobby lobby; accept() connections until ready
         - first JOIN locks the mode
         - PVP needs P1 + P2; BOT is ready with just P1
       send MATCH_READY to all
-      build MatchWorld3D + setMatchMode
-      loop at 60 Hz:
-        - drain action queue (CLICK / BYE)
-        - world.update(delta)
-        - emit SFX
-        - every 1/30 s: broadcast STATE to all
-      send GAME_OVER
+      while (p1Wins < 2 && p2Wins < 2 && !shutdown):
+        winner = runOneRound(mode):
+          build MatchWorld3D + setMatchMode
+          loop at 60 Hz while the match is running:
+            - drain action queue (CLICK / USE_ITEM / READY / BYE)
+            - world.update(delta)
+            - emit SFX
+            - every 1/30 s: broadcast STATE to all
+          return round winner (0 if a player disconnected mid-round)
+        if winner == 0: abort the match (a player left) and break
+        tally the win; send ROUND_OVER; pause between rounds
+      if not aborted: send GAME_OVER to the best-of-3 winner
       close connections, loop again
   }
 ```
@@ -113,8 +118,9 @@ Two entry points for a client to reach this server:
   (bound `0.0.0.0`). Synchronous startup via a `CountDownLatch`
   triggered by the `onListening` callback added to `GameServer.run`.
 - **Subprocess** (`LocalServerProcess`) — runs the `server` fat jar in
-  a child JVM. Detects readiness by tailing stdout. Currently not
-  wired into any screen but kept as a fallback.
+  a child JVM. Detects readiness by tailing stdout. This is the primary
+  path tried first by `Main.autoLaunchServer()`; the in-process server
+  above is the fallback used when the jar can't be located or launched.
 
 ### 6. Click-based protocol
 

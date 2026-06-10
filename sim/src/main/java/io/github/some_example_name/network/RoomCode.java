@@ -9,9 +9,9 @@ package io.github.some_example_name.network;
  *
  * <p>Examples:
  * <pre>
- *   192.168.1.5  →  "1HGE131"
+ *   192.168.1.5  →  "1HGE139"
  *   127.0.0.1    →  "0Z8KFLT"   (local testing)
- *   10.0.0.1     →  "004MD01"   (ZeroTier / Tailscale style)
+ *   10.0.0.1     →  "02RVXTT"   (ZeroTier / Tailscale style)
  * </pre></p>
  */
 public final class RoomCode {
@@ -24,7 +24,7 @@ public final class RoomCode {
 
     // ── encode ──────────────────────────────────────────────────────────
 
-    /** "192.168.1.5" → "1Z141F" — returns "??????" for malformed input. */
+    /** "192.168.1.5" → "1HGE139" — returns "??????" for malformed input. */
     public static String encode(String ip) {
         try {
             String[] parts = ip.trim().split("\\.");
@@ -49,7 +49,7 @@ public final class RoomCode {
     // ── decode ──────────────────────────────────────────────────────────
 
     /**
-     * "1Z141F" → "192.168.1.5"
+     * "1HGE139" → "192.168.1.5"
      *
      * @return dotted-quad IP string, or {@code null} if the code is invalid.
      */

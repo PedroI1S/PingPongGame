@@ -118,8 +118,7 @@ collapses.
 ## Loading the models in code
 
 After dropping the `.glb` files into `assets/models/`, replace the
-`ModelBuilder` calls in `NetMatchScreen.buildModels()` /
-`MatchScreen3D.buildModels()` with:
+`ModelBuilder` calls in `MatchArenaRenderer.buildModels()` with:
 
 ```java
 assetManager.load("models/table.glb", Model.class);

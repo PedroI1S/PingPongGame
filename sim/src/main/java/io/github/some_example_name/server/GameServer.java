@@ -121,8 +121,13 @@ public final class GameServer {
         if (p2 != null) p2.setListener(new MatchPlayerListener(2));
 
         int p1Wins = 0, p2Wins = 0;
+        boolean aborted = false;
         while (p1Wins < 2 && p2Wins < 2 && !shutdown) {
             int roundWinner = runOneRound(mode);
+            if (roundWinner == 0) {   // round ended without a result → a player left
+                aborted = true;
+                break;
+            }
             if (roundWinner == 1) p1Wins++;
             else p2Wins++;
             sendRoundOverToAll(roundWinner, p1Wins, p2Wins);
@@ -133,9 +138,13 @@ public final class GameServer {
             }
         }
 
-        int matchWinner = p1Wins >= 2 ? 1 : 2;
-        sendGameOverToAll(matchWinner);
-        System.out.println("[GameServer] Match over — winner P" + matchWinner);
+        if (aborted) {
+            System.out.println("[GameServer] Match aborted — a player disconnected.");
+        } else if (!shutdown) {
+            int matchWinner = p1Wins >= 2 ? 1 : 2;
+            sendGameOverToAll(matchWinner);
+            System.out.println("[GameServer] Match over — winner P" + matchWinner);
+        }
 
         endMatchConnections();
         world = null;
@@ -166,14 +175,10 @@ public final class GameServer {
 
             Phase curPhase = w.getPhase();
             if (prevPhase != Phase.ITEM_PHASE && curPhase == Phase.ITEM_PHASE) {
-                System.out.println("[DBG][Server] → ITEM_PHASE entered, broadcasting items");
                 broadcastItemDealt(w);
                 if (mode == MatchMode.BOT) {
-                    System.out.println("[DBG][Server] queuing bot playerReady(2)");
-                    actions.offer(() -> {
-                        System.out.println("[DBG][Server] executing bot playerReady(2)");
-                        w.playerReady(2);
-                    });
+                    // Bot has no client to press READY — auto-ready it.
+                    actions.offer(() -> w.playerReady(2));
                 }
             }
             prevPhase = curPhase;
@@ -201,6 +206,10 @@ public final class GameServer {
         }
 
         world = null;
+        // Loop can also exit on disconnect/BYE (matchRunning=false) or shutdown,
+        // in which case there is no winner — signal an abort with 0 so the
+        // best-of-3 loop stops instead of awarding a phantom round.
+        if (!w.isMatchOver()) return 0;
         return w.getOutcome() == MatchOutcome.PLAYER_WIN ? 1 : 2;
     }
 
@@ -227,7 +236,6 @@ public final class GameServer {
         int ap = w.getActivePlayer();
         int p1l = w.getPlayerLives();
         int p2l = w.getP2Lives();
-
         if (c1 != null) {
             c1.sendState(pos.x, pos.y, pos.z, vel.x, vel.y, vel.z, p1l, p2l, vis, ap);
         }
@@ -381,13 +389,8 @@ public final class GameServer {
 
         @Override
         public void onItemReady() {
-            System.out.printf("[DBG][Server] onItemReady from player %d%n", playerNumber);
             MatchWorld3D w = world;
-            if (w == null || !matchRunning) {
-                System.out.printf("[DBG][Server] onItemReady ignored — world=%s matchRunning=%b%n",
-                    w, matchRunning);
-                return;
-            }
+            if (w == null || !matchRunning) return;
             actions.offer(() -> w.playerReady(playerNumber));
         }
 
