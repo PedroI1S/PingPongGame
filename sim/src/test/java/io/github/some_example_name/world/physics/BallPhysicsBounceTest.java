@@ -96,6 +96,19 @@ class BallPhysicsBounceTest {
         assertTrue(s.spin.len() < before * 0.8f);
     }
 
+    /**
+     * Pins the friction torque and its ordering: the forward kick's reaction
+     * torque must reduce topspin BEFORE the contact decay multiplies it.
+     * Numbers: slipZ = 4 − 30·0.18 = −1.4 → grip-capped j = 0.4 →
+     * Δωx = −0.4/(0.4·0.18) ≈ −5.56; (30 − 5.56)·0.7 ≈ 17.11. Without the
+     * torque this would be 21.0; with decay-before-torque ≈ 15.44.
+     */
+    @Test void bounceTorqueReducesTopspinBeforeDecay() {
+        BallState s = falling(0f, 4f, 30f, 0f, 0f);
+        oneBounce(pureBounceCfg(), s);
+        assertEquals(17.11f, s.spin.x, 0.3f);
+    }
+
     @Test void noBouncePastTableEdge() {
         PhysicsConfig cfg = pureBounceCfg();
         BallPhysics phys = new BallPhysics(cfg);
