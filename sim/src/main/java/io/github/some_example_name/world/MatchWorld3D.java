@@ -14,6 +14,7 @@ import io.github.some_example_name.model.MatchConfig;
 import io.github.some_example_name.model.MatchMode;
 import io.github.some_example_name.model.MatchOutcome;
 import io.github.some_example_name.model.PlayerInventory;
+import io.github.some_example_name.world.physics.PhysicsConfig;
 
 /**
  * 3D POC version of the duel — physics-driven for both sides.
@@ -25,12 +26,12 @@ import io.github.some_example_name.model.PlayerInventory;
  */
 public final class MatchWorld3D {
 
-    public static final float TABLE_HALF_WIDTH  = 3f;
-    public static final float TABLE_HALF_LENGTH = 7f;
-    public static final float TABLE_TOP_Y       = 2f;
-    public static final float NET_HEIGHT        = 0.5f;
-    public static final float NET_TOP_Y         = TABLE_TOP_Y + NET_HEIGHT;
-    public static final float BALL_RADIUS       = 0.18f;
+    public static final float TABLE_HALF_WIDTH  = PhysicsConfig.TABLE_HALF_WIDTH;
+    public static final float TABLE_HALF_LENGTH = PhysicsConfig.TABLE_HALF_LENGTH;
+    public static final float TABLE_TOP_Y       = PhysicsConfig.TABLE_TOP_Y;
+    public static final float NET_TOP_Y         = PhysicsConfig.NET_TOP_Y;
+    public static final float NET_HEIGHT        = NET_TOP_Y - TABLE_TOP_Y;
+    public static final float BALL_RADIUS       = PhysicsConfig.BALL_RADIUS;
     public static final float GRAVITY           = 9.8f;
 
     private static final float BOUNCE_RESTITUTION = 0.7f;

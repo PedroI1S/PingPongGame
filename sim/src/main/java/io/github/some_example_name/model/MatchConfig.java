@@ -1,11 +1,13 @@
 package io.github.some_example_name.model;
 
 import io.github.some_example_name.config.GameConfig;
+import io.github.some_example_name.world.physics.PhysicsConfig;
 
 /** Full rules snapshot for one match instance. */
 public final class MatchConfig {
     private final FighterConfig player = new FighterConfig();
     private final FighterConfig bot = new FighterConfig();
+    private final PhysicsConfig physics = PhysicsConfig.createDefault();
 
     private float initialApproachDuration = GameConfig.BASE_APPROACH_DURATION;
     private float approachDurationDecay = GameConfig.APPROACH_DURATION_DECAY;
@@ -34,5 +36,9 @@ public final class MatchConfig {
 
     public float getBotBaseReturnChance() {
         return botBaseReturnChance;
+    }
+
+    public PhysicsConfig getPhysics() {
+        return physics;
     }
 }
