@@ -21,9 +21,6 @@ public final class PaddleContact {
     /** Generous ray-vs-ball padding so clicks near the ball still count. */
     public static final float CLICK_HIT_PADDING = 3.5f;
 
-    /** Scratch — the server loop and tests are single-threaded. */
-    private static final Vector3 tmp = new Vector3();
-
     private PaddleContact() {}
 
     /** Effective click radius (base × stat/item multipliers × padding). */
@@ -39,9 +36,12 @@ public final class PaddleContact {
                                         float scaleMultiplier, float powerMultiplier,
                                         float paceMultiplier, boolean towardNegativeZ) {
         float radius = hitRadius(scaleMultiplier);
-        if (!Intersector.intersectRaySphere(ray, ball.pos, radius, tmp)) return false;
-        float ndx = MathUtils.clamp((tmp.x - ball.pos.x) / radius, -1f, 1f);
-        float ndy = MathUtils.clamp((tmp.y - ball.pos.y) / radius, -1f, 1f);
+        // local scratch: clicks are rare (not per-frame), and statelessness keeps
+        // the class safe for any future parallel worlds
+        Vector3 hit = new Vector3();
+        if (!Intersector.intersectRaySphere(ray, ball.pos, radius, hit)) return false;
+        float ndx = MathUtils.clamp((hit.x - ball.pos.x) / radius, -1f, 1f);
+        float ndy = MathUtils.clamp((hit.y - ball.pos.y) / radius, -1f, 1f);
         applyReturn(ball, cfg, ndx, ndy, powerMultiplier, paceMultiplier, towardNegativeZ,
                     cfg.basePaceSI, cfg.baseArcSI);
         return true;
@@ -87,11 +87,11 @@ public final class PaddleContact {
         float radius = hitRadius(1f);
         float ndx = 0f, ndy = 0f;
         if (ray != null) {
-            tmp.set(ball.pos).sub(ray.origin);
-            float t = Math.max(0f, tmp.dot(ray.direction));
-            tmp.set(ray.direction).scl(t).add(ray.origin).sub(ball.pos);
-            ndx = MathUtils.clamp(tmp.x / radius, -1f, 1f) * cfg.serveControl;
-            ndy = MathUtils.clamp(tmp.y / radius, -1f, 1f) * cfg.serveControl;
+            Vector3 nearest = new Vector3(ball.pos).sub(ray.origin);
+            float t = Math.max(0f, nearest.dot(ray.direction));
+            nearest.set(ray.direction).scl(t).add(ray.origin).sub(ball.pos);
+            ndx = MathUtils.clamp(nearest.x / radius, -1f, 1f) * cfg.serveControl;
+            ndy = MathUtils.clamp(nearest.y / radius, -1f, 1f) * cfg.serveControl;
         }
         ball.vel.setZero();  // serves start from rest: no carry
         ball.spin.setZero(); // and no spin transfer

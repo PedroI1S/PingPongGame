@@ -74,6 +74,22 @@ class PaddleContactTest {
         assertTrue(s.spin.len() <= CFG.maxSpinW() + 1e-3f);
     }
 
+    /**
+     * Transfer + fresh spin stacking: a max-spin incoming ball returned with a
+     * hard edge click pushes the reversed transfer (−0.3·ω_in) and the fresh
+     * sidespin in the SAME direction — they must accumulate (then clamp), not
+     * cancel. This is the combination the bot hits constantly when returning
+     * its own spun shots.
+     */
+    @Test void heavyIncomingSpinPlusEdgeClickAccumulatesAndClamps() {
+        BallState s = incomingForP1();
+        s.spin.set(0f, CFG.maxSpinW(), 0f); // heavy incoming sidespin
+        PaddleContact.applyReturn(s, CFG, 0.9f, 0.9f, 1f, 1f, true, CFG.basePaceSI, CFG.baseArcSI);
+        assertTrue(s.spin.len() <= CFG.maxSpinW() + 1e-3f, "clamp must hold");
+        assertTrue(s.spin.y < -30f,
+            "reversed transfer and fresh P1 sidespin both push ωy negative, got " + s.spin.y);
+    }
+
     /** Property: center-ish return clicks land on the opponent's half ≥ 95%. */
     @Test void centerishReturnsLandOnOpponentHalf() {
         int total = 0, landed = 0;
