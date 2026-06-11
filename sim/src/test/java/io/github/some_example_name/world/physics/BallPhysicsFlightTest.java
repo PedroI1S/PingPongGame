@@ -65,6 +65,8 @@ class BallPhysicsFlightTest {
         phys.step(left, 0.8f, null, c);
         new BallPhysics(cfg).step(right, 0.8f, null, c);
         assertTrue(Math.abs(left.pos.x) > 0.15f, "spin should visibly curve the ball");
+        // pins the cross-product convention a = k·(spin × vel): +y spin on −z travel curves −x
+        assertTrue(left.pos.x < 0f, "+y spin with -z travel must curve toward -x, got " + left.pos.x);
         assertEquals(left.pos.x, -right.pos.x, 1e-3f);
     }
 
