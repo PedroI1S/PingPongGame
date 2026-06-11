@@ -30,7 +30,7 @@ class MatchWorld3DServeTimeoutTest {
     @Test void pvpServeWithinWindowStillWorks() {
         for (int i = 0; i < 50; i++) world.update(0.1f); // 5s — inside the window
         assertEquals(MatchWorld3D.Phase.PREPARE_SERVE, world.getPhase());
-        assertTrue(world.tryPlayerServe());
+        assertTrue(world.tryPlayerServe(null));
         assertEquals(MatchWorld3D.Phase.OUTGOING, world.getPhase());
     }
 }

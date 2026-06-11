@@ -201,6 +201,7 @@ public final class GameServer {
 
             if (w.consumePaddleHitEvent())  sendSfxToAll(PacketType.SFX_PADDLE);
             if (w.consumeTableBounceEvent()) sendSfxToAll(PacketType.SFX_TABLE);
+            if (w.consumeNetHitEvent())      sendSfxToAll(PacketType.SFX_TABLE);
 
             stateAcc += delta;
             if (stateAcc >= STATE_DT) {
