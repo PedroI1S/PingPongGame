@@ -6,20 +6,12 @@ import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.Ray;
 
 /**
- * Shared click-to-return velocity math for local and networked play.
- *
- * <p>Single-player uses {@link #computeFromRay}; the server uses
- * {@link #sanitizeNetworkReturn} to reject or clamp client-supplied vectors.</p>
+ * Click-to-return velocity math.  The server computes every return from a
+ * pick ray ({@link #computeFromRay}), so clients never submit raw velocities.
  */
 public final class HitVelocity {
 
     public static final float CLICK_HIT_PADDING = 3.5f;
-
-    private static final float MIN_VZ = 5f;
-    private static final float MAX_VZ = 11f;
-    private static final float MIN_VY = 3f;
-    private static final float MAX_VY = 9f;
-    private static final float MAX_VX = 3.2f;
 
     private HitVelocity() {}
 
@@ -51,39 +43,6 @@ public final class HitVelocity {
             ndx * 3.2f,
             5.0f + ndy * 2.0f,
             zSign * (7.5f + power * 2.0f) * returnPowerMultiplier
-        );
-        return true;
-    }
-
-    /**
-     * Validates and clamps a client HIT packet before the server applies it.
-     *
-     * @param playerNumber 1 (toward −z) or 2 (toward +z)
-     * @param out            receives the sanitized velocity
-     * @return {@code false} if the vector is unusable (wrong direction or out of range)
-     */
-    public static boolean sanitizeNetworkReturn(int playerNumber,
-                                                float vx, float vy, float vz,
-                                                Vector3 out) {
-        float zDir = (playerNumber == 1) ? -1f : 1f;
-        if (vz * zDir >= 0f) {
-            return false;
-        }
-        float vzMag = Math.abs(vz);
-        if (vzMag < MIN_VZ || vzMag > MAX_VZ) {
-            return false;
-        }
-        if (vy < MIN_VY || vy > MAX_VY) {
-            return false;
-        }
-        if (Math.abs(vx) > MAX_VX + 0.5f) {
-            return false;
-        }
-
-        out.set(
-            MathUtils.clamp(vx, -MAX_VX, MAX_VX),
-            MathUtils.clamp(vy, MIN_VY, MAX_VY),
-            zDir * MathUtils.clamp(vzMag, 7.5f, 9.5f)
         );
         return true;
     }

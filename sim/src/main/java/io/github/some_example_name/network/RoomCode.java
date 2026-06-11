@@ -24,15 +24,18 @@ public final class RoomCode {
 
     // ── encode ──────────────────────────────────────────────────────────
 
-    /** "192.168.1.5" → "1HGE139" — returns "??????" for malformed input. */
+    /** Sentinel for malformed input — same length as a real code. */
+    private static final String INVALID = "?".repeat(LENGTH);
+
+    /** "192.168.1.5" → "1HGE139" — returns {@link #INVALID} for malformed input. */
     public static String encode(String ip) {
         try {
             String[] parts = ip.trim().split("\\.");
-            if (parts.length != 4) return "??????";
+            if (parts.length != 4) return INVALID;
             long value = 0;
             for (String p : parts) {
                 int octet = Integer.parseInt(p);
-                if (octet < 0 || octet > 255) return "??????";
+                if (octet < 0 || octet > 255) return INVALID;
                 value = value * 256 + octet;
             }
             char[] out = new char[LENGTH];
@@ -42,7 +45,7 @@ public final class RoomCode {
             }
             return new String(out);
         } catch (Exception e) {
-            return "??????";
+            return INVALID;
         }
     }
 

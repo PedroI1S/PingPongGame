@@ -1,18 +1,17 @@
 package io.github.some_example_name.screen;
 
-import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
-import com.badlogic.gdx.InputAdapter;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
-import com.badlogic.gdx.math.Vector3;
 import io.github.some_example_name.Main;
 import io.github.some_example_name.assets.ProceduralAssets;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.config.Palette;
 import io.github.some_example_name.model.MatchOutcome;
+import io.github.some_example_name.ui.Button;
+import io.github.some_example_name.ui.UIDraw;
 
 import java.util.Arrays;
 import java.util.List;
@@ -23,10 +22,8 @@ import java.util.List;
  * <p>Two clickable buttons stacked centre-screen: VS BOT and MULTIPLAYER.
  * Keyboard shortcuts (ENTER / SPACE / M) still work as fallbacks.</p>
  */
-public final class MenuScreen extends BaseScreen {
+public final class MenuScreen extends MenuBaseScreen {
 
-    private final InputHandler input = new InputHandler();
-    private final Vector3 cursorWorld = new Vector3();
     private float clock;
 
     private final Button vsBotBtn;
@@ -65,13 +62,13 @@ public final class MenuScreen extends BaseScreen {
 
     @Override
     public void show() {
-        Gdx.input.setInputProcessor(input);
+        super.show();
         clock = 0f;
     }
 
     @Override
-    public void hide() {
-        Gdx.input.setInputProcessor(null);
+    protected List<Button> activeButtons() {
+        return buttons;
     }
 
     // ── Render ────────────────────────────────────────────────────────────────
@@ -79,8 +76,7 @@ public final class MenuScreen extends BaseScreen {
     @Override
     public void render(float delta) {
         clock += delta;
-        updateCursorWorld();
-        for (Button b : buttons) b.updateHover(cursorWorld.x, cursorWorld.y);
+        updateButtonHover();
 
         // Menus render straight to the back buffer.  The retro post-process
         // is applied only inside NetMatchScreen so the menu
@@ -138,11 +134,6 @@ public final class MenuScreen extends BaseScreen {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private void updateCursorWorld() {
-        cursorWorld.set(Gdx.input.getX(), Gdx.input.getY(), 0f);
-        context.getViewport().unproject(cursorWorld);
-    }
-
     private String lastOutcomeText() {
         MatchOutcome o = context.getSession().getLastOutcome();
         return switch (o) {
@@ -168,31 +159,20 @@ public final class MenuScreen extends BaseScreen {
 
     // ── Input ─────────────────────────────────────────────────────────────────
 
-    private final class InputHandler extends InputAdapter {
-        @Override
-        public boolean keyDown(int keycode) {
-            if (keycode == Input.Keys.ENTER || keycode == Input.Keys.SPACE) {
-                game.openMatch();
-                return true;
-            }
-            if (keycode == Input.Keys.M) {
-                game.openMultiplayerLobby();
-                return true;
-            }
-            if (keycode == Input.Keys.C) {
-                game.openConfig();
-                return true;
-            }
-            return false;
+    @Override
+    protected boolean onKeyDown(int keycode) {
+        if (keycode == Input.Keys.ENTER || keycode == Input.Keys.SPACE) {
+            game.openMatch();
+            return true;
         }
-
-        @Override
-        public boolean touchDown(int sx, int sy, int pointer, int btn) {
-            updateCursorWorld();
-            for (Button b : buttons) {
-                if (b.tryClick(cursorWorld.x, cursorWorld.y)) return true;
-            }
-            return false;
+        if (keycode == Input.Keys.M) {
+            game.openMultiplayerLobby();
+            return true;
         }
+        if (keycode == Input.Keys.C) {
+            game.openConfig();
+            return true;
+        }
+        return false;
     }
 }

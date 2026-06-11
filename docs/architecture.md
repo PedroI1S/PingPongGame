@@ -59,6 +59,18 @@ the active screen.
 Owns: `SpriteBatch`, `FitViewport`, fonts, `GlyphLayout`, `GameAssets`,
 `GameSession`, `GameSettings`, and the lazily-built `RetroPostProcess`.
 
+`GameAssets` and `ShaderManager` are singletons (`instance()`); the
+context's accessors are the normal way to reach them, and
+`GameContext.dispose()` tears both down. Compiled `ShaderProgram`s are
+cached in `ShaderManager` and owned by it — consumers (e.g.
+`RetroPostProcess`) must not dispose them.
+
+Menu-style screens (`MenuScreen`, `PauseMenuScreen`,
+`MultiplayerLobbyScreen`) extend `MenuBaseScreen`, which owns cursor
+unprojection, input-processor wiring, and button hover/click plumbing.
+Reusable widgets (`Button`, `UIDraw`, `SettingsWidgets`) live in the
+`ui` package, separate from the screens that compose them.
+
 ### 3. `GameSession` carries the multiplayer link
 
 Persists across screens:
@@ -79,8 +91,9 @@ loadout.
 `GameAssets` wraps libGDX `AssetManager`. The visuals are six textures
 generated at startup through `ProceduralAssetsLoader` — pixel, panel,
 background, glow, aim ring, noise. The only file assets loaded are the
-three audio clips. The 3D table / net / ball / floor are `ModelBuilder`
-geometry built by `MatchArenaRenderer`.
+three audio clips and the generated voxel OBJ models (table+net, ball,
+items, fly — produced by `tools/voxel/generate_*.py`); `MatchArenaRenderer`
+falls back to `ModelBuilder` geometry if a model fails to load.
 
 ### 5. Server-authoritative architecture
 

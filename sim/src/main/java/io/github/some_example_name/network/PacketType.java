@@ -91,11 +91,7 @@ public final class PacketType {
      */
     public static final byte CLICK     = 12;
 
-    /** @deprecated Legacy serve — use {@link #CLICK}. */
-    public static final byte SERVE     = 13;
-
-    /** @deprecated Legacy hit — use {@link #CLICK}. */
-    public static final byte HIT       = 14;
+    // 13 (SERVE) and 14 (HIT) were the legacy pre-CLICK protocol — retired.
 
     /** Clean disconnect notice. No payload. */
     public static final byte BYE       = 15;
@@ -108,14 +104,16 @@ public final class PacketType {
 
     /**
      * Flies spawned on a player's side as an item effect.
-     * Payload: {@code byte count}, then {@code count} × ({@code float x}, {@code float z}).
+     * Payload: {@code byte owner} (player 1/2 whose side the flies are on),
+     * {@code byte count}, then {@code count} × ({@code float x}, {@code float z}).
      * Positions are absolute table coordinates; y is fixed, so it is not sent.
      */
     public static final byte FLY_SPAWN  = 25;
 
     /**
-     * A fly has been swatted.
-     * Payload: {@code byte flyIndex} (index into the recipient's fly array).
+     * A fly has been swatted or hit by the ball.
+     * Payload: {@code byte owner} (player 1/2 whose fly list is addressed),
+     * {@code byte flyIndex} (index into that player's fly array).
      */
     public static final byte FLY_KILLED = 26;
 

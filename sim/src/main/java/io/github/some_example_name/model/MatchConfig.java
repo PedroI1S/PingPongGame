@@ -24,16 +24,8 @@ public final class MatchConfig {
         return initialApproachDuration;
     }
 
-    public void addInitialApproachDuration(float amount) {
-        initialApproachDuration += amount;
-    }
-
     public float getApproachDurationDecay() {
         return approachDurationDecay;
-    }
-
-    public void addApproachDurationDecay(float amount) {
-        approachDurationDecay += amount;
     }
 
     public float getMinimumApproachDuration() {
@@ -42,9 +34,5 @@ public final class MatchConfig {
 
     public float getBotBaseReturnChance() {
         return botBaseReturnChance;
-    }
-
-    public void addBotBaseReturnChance(float amount) {
-        botBaseReturnChance += amount;
     }
 }

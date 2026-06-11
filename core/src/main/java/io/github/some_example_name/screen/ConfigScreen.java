@@ -13,9 +13,12 @@ import io.github.some_example_name.assets.ProceduralAssets;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.config.Palette;
 import io.github.some_example_name.core.GameSettings;
-import io.github.some_example_name.screen.SettingsWidgets.Radio;
-import io.github.some_example_name.screen.SettingsWidgets.Slider;
-import io.github.some_example_name.screen.SettingsWidgets.Toggle;
+import io.github.some_example_name.ui.Button;
+import io.github.some_example_name.ui.SettingsWidgets;
+import io.github.some_example_name.ui.SettingsWidgets.Radio;
+import io.github.some_example_name.ui.SettingsWidgets.Slider;
+import io.github.some_example_name.ui.SettingsWidgets.Toggle;
+import io.github.some_example_name.ui.UIDraw;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -90,11 +93,19 @@ public final class ConfigScreen extends BaseScreen {
         if (input.consumeBack()) { goBack(); return; }
 
         updateCursorWorld();
-        for (TabPill p : tabPills) p.updateHover(cursorWorld.x, cursorWorld.y);
+        for (TabPill p : tabPills) {
+            boolean was = p.hovered;
+            p.updateHover(cursorWorld.x, cursorWorld.y);
+            if (!was && p.hovered) playHover();
+        }
         for (Toggle  t : toggles)  t.updateHover (cursorWorld.x, cursorWorld.y);
         for (Slider  s : sliders)  { s.tryDrag(cursorWorld.x, cursorWorld.y); s.updateHover(cursorWorld.x, cursorWorld.y); }
         for (Radio<?>r : radios)   r.updateHover (cursorWorld.x, cursorWorld.y);
-        if (backBtn != null) backBtn.updateHover(cursorWorld.x, cursorWorld.y);
+        if (backBtn != null) {
+            boolean was = backBtn.hovered;
+            backBtn.updateHover(cursorWorld.x, cursorWorld.y);
+            if (!was && backBtn.hovered) playHover();
+        }
 
         beginFrame(Palette.BG.r, Palette.BG.g, Palette.BG.b);
         SpriteBatch      batch   = context.getBatch();
@@ -187,8 +198,7 @@ public final class ConfigScreen extends BaseScreen {
                 drawSettingRow(batch, pixel, body, rowX, rowY(0), rowW, "Master Volume",  "controls all output channels");
                 drawSettingRow(batch, pixel, body, rowX, rowY(1), rowW, "Music Volume",   "background track during match");
                 drawSettingRow(batch, pixel, body, rowX, rowY(2), rowW, "SFX Volume",     "ball impacts, miss sounds, particles");
-                drawSettingRow(batch, pixel, body, rowX, rowY(3), rowW, "UI Volume",      "menu clicks and transitions");
-                drawSettingRow(batch, pixel, body, rowX, rowY(4), rowW, "Mute All",       "shortcut for master volume = 0");
+                drawSettingRow(batch, pixel, body, rowX, rowY(3), rowW, "Mute All",       "shortcut for master volume = 0");
             }
             case GRAPHICS -> {
                 int i = 0;
@@ -269,8 +279,7 @@ public final class ConfigScreen extends BaseScreen {
                 sliders.add(makeVolSlider(sliderX, widgetY(0) - 6f, sliderW, s::getMasterVolume, s::setMasterVolume));
                 sliders.add(makeVolSlider(sliderX, widgetY(1) - 6f, sliderW, s::getMusicVolume,  s::setMusicVolume));
                 sliders.add(makeVolSlider(sliderX, widgetY(2) - 6f, sliderW, s::getSfxVolume,    s::setSfxVolume));
-                sliders.add(makeVolSlider(sliderX, widgetY(3) - 6f, sliderW, s::getUiVolume,     s::setUiVolume));
-                toggles.add(new Toggle(toggleX, widgetY(4) - 6f,
+                toggles.add(new Toggle(toggleX, widgetY(3) - 6f,
                     () -> s.getMasterVolume() == 0,
                     on -> s.setMasterVolume(on ? 0 : 80)));
             }
@@ -370,6 +379,14 @@ public final class ConfigScreen extends BaseScreen {
         else game.openMenu();
     }
 
+    private void playClick() {
+        context.getAssets().getUiClickSfx().play(context.getSettings().getSfxGain() * 0.6f);
+    }
+
+    private void playHover() {
+        context.getAssets().getUiHoverSfx().play(context.getSettings().getSfxGain() * 0.4f);
+    }
+
     @Override
     public void resize(int width, int height) {
         super.resize(width, height);
@@ -434,11 +451,11 @@ public final class ConfigScreen extends BaseScreen {
         @Override
         public boolean touchDown(int sx, int sy, int p, int b) {
             updateCursorWorld();
-            for (TabPill t : tabPills) if (t.tryClick(cursorWorld.x, cursorWorld.y)) return true;
-            for (Toggle  t : toggles)  if (t.tryClick(cursorWorld.x, cursorWorld.y)) return true;
-            for (Slider  s : sliders)  if (s.tryClick(cursorWorld.x, cursorWorld.y)) return true;
-            for (Radio<?>r : radios)   if (r.tryClick(cursorWorld.x, cursorWorld.y)) return true;
-            if (backBtn != null && backBtn.tryClick(cursorWorld.x, cursorWorld.y)) return true;
+            for (TabPill t : tabPills) if (t.tryClick(cursorWorld.x, cursorWorld.y)) { playClick(); return true; }
+            for (Toggle  t : toggles)  if (t.tryClick(cursorWorld.x, cursorWorld.y)) { playClick(); return true; }
+            for (Slider  s : sliders)  if (s.tryClick(cursorWorld.x, cursorWorld.y)) { playClick(); return true; }
+            for (Radio<?>r : radios)   if (r.tryClick(cursorWorld.x, cursorWorld.y)) { playClick(); return true; }
+            if (backBtn != null && backBtn.tryClick(cursorWorld.x, cursorWorld.y)) { playClick(); return true; }
             return false;
         }
 
