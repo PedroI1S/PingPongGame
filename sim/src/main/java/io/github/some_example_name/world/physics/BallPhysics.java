@@ -85,6 +85,8 @@ public final class BallPhysics {
                 + (random != null ? (random.nextFloat() * 2f - 1f) * cfg.netJitter : 0f);
         s.pos.x = xAt;
         s.pos.y = yAt;
+        // nudge just off the net plane onto the chosen side; the next substep's
+        // table contact catches the drop, so the ball can never sink through
         s.pos.z = (u >= 0f ? travelSign : -travelSign) * 0.02f;
         s.vel.z *= u;                       // u < 0 flips direction = falls back
         s.vel.x *= cfg.netLateralKeep;

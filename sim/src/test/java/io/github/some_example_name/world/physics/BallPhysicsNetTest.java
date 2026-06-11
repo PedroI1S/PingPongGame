@@ -19,6 +19,42 @@ class BallPhysicsNetTest {
         return s;
     }
 
+    /** Pins the clearance rule: the ball clears only if its BOTTOM is above the net top. */
+    @Test void clearanceBoundaryUsesBallBottom() {
+        PhysicsConfig cfg = PhysicsConfig.createDefault();
+        cfg.gravitySI = 0f; // straight-line flight: crossing height == launch height
+        cfg.dragKSI = 0f;
+        StepContacts c = new StepContacts();
+
+        BallState clears = toward(PhysicsConfig.NET_TOP_Y + PhysicsConfig.BALL_RADIUS + 0.001f, -8f);
+        new BallPhysics(cfg).step(clears, 0.1f, null, c);
+        assertFalse(c.netHit, "bottom above net top must clear");
+
+        BallState hits = toward(PhysicsConfig.NET_TOP_Y + PhysicsConfig.BALL_RADIUS - 0.001f, -8f);
+        new BallPhysics(cfg).step(hits, 0.1f, null, c);
+        assertTrue(c.netHit, "bottom below net top must hit");
+    }
+
+    /** The post-hit nudge lands over the table; the table contact must catch the drop. */
+    @Test void netHitThenTableSettlesOnTable() {
+        PhysicsConfig cfg = PhysicsConfig.createDefault();
+        BallPhysics phys = new BallPhysics(cfg);
+        BallState s = toward(2.25f, -8f);
+        StepContacts c = new StepContacts();
+        boolean sawNet = false, sawTable = false;
+        float minY = Float.MAX_VALUE;
+        for (int i = 0; i < 240; i++) {
+            phys.step(s, 1f / 60f, null, c);
+            sawNet |= c.netHit;
+            sawTable |= c.tableBounce;
+            minY = Math.min(minY, s.pos.y);
+        }
+        assertTrue(sawNet, "low ball must clip the net");
+        assertTrue(sawTable, "dribbled ball must reach the table");
+        assertTrue(minY >= PhysicsConfig.TABLE_TOP_Y - 1e-3f,
+            "ball must never sink below the table top, got " + minY);
+    }
+
     @Test void lowBallHitsNet() {
         PhysicsConfig cfg = PhysicsConfig.createDefault();
         BallPhysics phys = new BallPhysics(cfg);
