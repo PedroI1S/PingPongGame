@@ -1,6 +1,8 @@
 package io.github.some_example_name.world;
 
 import com.badlogic.gdx.math.RandomXS128;
+import com.badlogic.gdx.math.Vector3;
+import com.badlogic.gdx.math.collision.Ray;
 import io.github.some_example_name.model.MatchConfig;
 import io.github.some_example_name.model.MatchMode;
 import org.junit.jupiter.api.Test;
@@ -34,6 +36,22 @@ class MatchWorld3DRallyTest {
     @Test void ballSpinAccessorExists() {
         MatchWorld3D world = new MatchWorld3D(MatchConfig.createDefault(), new RandomXS128(3));
         assertNotNull(world.getBallSpin());
+    }
+
+    /**
+     * Guards the serve wiring end-to-end: an off-center serve click must leave
+     * the world's ball with spin (regression: a stray spin reset after
+     * serveFromRay once wiped it). The ray points straight down well to the
+     * right of any possible serve position, so the offset saturates regardless
+     * of the random serve x.
+     */
+    @Test void aimedServeImpartsSpin() {
+        MatchWorld3D world = new MatchWorld3D(MatchConfig.createDefault(), new RandomXS128(3));
+        world.setMatchMode(MatchMode.PVP);
+        Ray aimRight = new Ray(new Vector3(2.5f, 10f, 6f), new Vector3(0f, -1f, 0f));
+        assertTrue(world.tryPlayerServe(aimRight));
+        assertTrue(world.getBallSpin().len() > 1f,
+            "an off-center serve click must impart spin, got " + world.getBallSpin());
     }
 
     /**

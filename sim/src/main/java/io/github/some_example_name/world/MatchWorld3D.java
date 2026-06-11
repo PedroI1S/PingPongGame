@@ -1,5 +1,6 @@
 package io.github.some_example_name.world;
 
+import com.badlogic.gdx.math.Intersector;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.RandomXS128;
 import com.badlogic.gdx.math.Vector3;
@@ -16,6 +17,7 @@ import io.github.some_example_name.model.MatchOutcome;
 import io.github.some_example_name.model.PlayerInventory;
 import io.github.some_example_name.world.physics.BallPhysics;
 import io.github.some_example_name.world.physics.BallState;
+import io.github.some_example_name.world.physics.PaddleContact;
 import io.github.some_example_name.world.physics.PhysicsConfig;
 import io.github.some_example_name.world.physics.StepContacts;
 
@@ -456,17 +458,18 @@ public final class MatchWorld3D {
     public boolean tryHitBall(Ray pickRay) {
         if (phase != Phase.INCOMING) return false;
         if (ball.pos.z < 0f || ball.pos.z > TABLE_HALF_LENGTH + 1.5f) return false;
-        if (!HitVelocity.computeFromRay(pickRay, ball.pos, player.getTargetScaleMultiplier() * p1Effects.hitScaleMultiplier(),
-                player.getReturnPowerMultiplier(), true, ball.vel, hitPoint, tmpVel)) {
-            return false;
-        }
+        float scale = player.getTargetScaleMultiplier() * p1Effects.hitScaleMultiplier();
+        float hitRadius = PaddleContact.hitRadius(scale);
+        if (!Intersector.intersectRaySphere(pickRay, ball.pos, hitRadius, hitPoint)) return false;
 
-        tmpVel.set(hitPoint).sub(ball.pos);
-        float hitRadius = BALL_RADIUS * player.getTargetScaleMultiplier() * p1Effects.hitScaleMultiplier() * HitVelocity.CLICK_HIT_PADDING;
-        float ndx = MathUtils.clamp(tmpVel.x / hitRadius, -1f, 1f);
-        float ndy = MathUtils.clamp(tmpVel.y / hitRadius, -1f, 1f);
-        float power = (float) Math.sqrt(ndx * ndx + ndy * ndy);
-        lastClickAccuracy = 1f - MathUtils.clamp(power, 0f, 1f);
+        float ndx = MathUtils.clamp((hitPoint.x - ball.pos.x) / hitRadius, -1f, 1f);
+        float ndy = MathUtils.clamp((hitPoint.y - ball.pos.y) / hitRadius, -1f, 1f);
+        lastClickAccuracy = 1f - MathUtils.clamp(
+            (float) Math.sqrt(ndx * ndx + ndy * ndy), 0f, 1f);
+        PaddleContact.applyReturn(ball, config.getPhysics(), ndx, ndy,
+            player.getReturnPowerMultiplier(), p2Effects.incomingSpeedMultiplier(), true,
+            config.getPhysics().basePaceSI, config.getPhysics().baseArcSI);
+
         pendingBotReturnChance = computeBotReturnChance();
         crossedNet = false;
         phase = Phase.OUTGOING;
@@ -500,20 +503,18 @@ public final class MatchWorld3D {
     /**
      * P1's serve (works in both single-player and network mode).
      * Launches the ball from the +z end toward P2 (-z), entering OUTGOING so
-     * P2 (client or bot) becomes the active player.
-     *
-     * @param pickRay unused in this task; reserved for Task 6 which maps the
-     *                ray to an aim direction. Pass {@code null} for the legacy
-     *                fixed center serve.
+     * P2 (client or bot) becomes the active player. The click ray now aims the
+     * serve: center-of-ball clicks give a neutral serve, off-center clicks curve
+     * it. Pass {@code null} for a neutral center serve.
      */
     public boolean tryPlayerServe(Ray pickRay) {
         if (phase != Phase.PREPARE_SERVE) return false;
         if (nextServer != 1) return false;
         float startX = (random.nextFloat() - 0.5f) * TABLE_HALF_WIDTH * 0.6f;
         ball.pos.set(startX, TABLE_TOP_Y + 1.2f, TABLE_HALF_LENGTH - 0.5f);
-        ball.vel.set(0f, 5.0f, -10f * p2Effects.incomingSpeedMultiplier()); // toward P2 (−z); lands ~z=−5.4 (deep serve)
-        ball.spin.setZero();
         ballPhysics.resetAccumulator();
+        PaddleContact.serveFromRay(pickRay, ball, config.getPhysics(),
+            p2Effects.incomingSpeedMultiplier(), true);
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
@@ -546,8 +547,9 @@ public final class MatchWorld3D {
             return tryClientServe(pickRay);
         }
         if (!isClientCanHit()) return false;
-        if (!HitVelocity.computeFromRay(pickRay, ball.pos, bot.getTargetScaleMultiplier() * p2Effects.hitScaleMultiplier(),
-                bot.getReturnPowerMultiplier(), false, ball.vel, hitPoint, tmpVel)) {
+        if (!PaddleContact.returnFromRay(pickRay, ball, config.getPhysics(),
+                bot.getTargetScaleMultiplier() * p2Effects.hitScaleMultiplier(),
+                bot.getReturnPowerMultiplier(), p1Effects.incomingSpeedMultiplier(), false)) {
             return false;
         }
         crossedNet = false;
@@ -560,10 +562,8 @@ public final class MatchWorld3D {
 
     /**
      * P2's serve in network mode. Launches the ball from the −z end toward P1 (+z),
-     * entering INCOMING (P1's perspective) so P1 becomes the active player.
-     *
-     * @param pickRay unused in this task; reserved for Task 6. Pass {@code null}
-     *                for the legacy fixed center serve.
+     * entering INCOMING (P1's perspective) so P1 becomes the active player. The
+     * click ray now aims the serve; pass {@code null} for a neutral center serve.
      */
     public boolean tryClientServe(Ray pickRay) {
         if (phase != Phase.PREPARE_SERVE) return false;
@@ -571,9 +571,9 @@ public final class MatchWorld3D {
         if (matchMode != MatchMode.PVP) return false; // BOT: P2 serves via server AI timer
         float startX = (random.nextFloat() - 0.5f) * TABLE_HALF_WIDTH * 0.6f;
         ball.pos.set(startX, TABLE_TOP_Y + 1.2f, -TABLE_HALF_LENGTH + 0.5f);
-        ball.vel.set(0f, 5.0f, 10f * p1Effects.incomingSpeedMultiplier()); // toward P1 (+z)
-        ball.spin.setZero();
         ballPhysics.resetAccumulator();
+        PaddleContact.serveFromRay(pickRay, ball, config.getPhysics(),
+            p1Effects.incomingSpeedMultiplier(), false);
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
