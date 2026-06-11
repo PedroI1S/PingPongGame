@@ -71,7 +71,26 @@ public final class BallPhysics {
 
     private void netContact(BallState s, float prevX, float prevY, float prevZ,
                             RandomXS128 random, StepContacts out) {
-        // Task 4
+        boolean crossed = (prevZ < 0f && s.pos.z >= 0f) || (prevZ > 0f && s.pos.z <= 0f);
+        if (!crossed) return;
+        float dz = s.pos.z - prevZ;
+        float t = Math.abs(dz) > 1e-6f ? -prevZ / dz : 0f;
+        float yAt = prevY + (s.pos.y - prevY) * t;
+        float xAt = prevX + (s.pos.x - prevX) * t;
+        if (yAt - PhysicsConfig.BALL_RADIUS >= PhysicsConfig.NET_TOP_Y) return; // cleared
+        if (Math.abs(xAt) > PhysicsConfig.TABLE_HALF_WIDTH) return;             // wide of the net
+
+        float travelSign = prevZ < 0f ? 1f : -1f;
+        float u = cfg.netForwardKeep
+                + (random != null ? (random.nextFloat() * 2f - 1f) * cfg.netJitter : 0f);
+        s.pos.x = xAt;
+        s.pos.y = yAt;
+        s.pos.z = (u >= 0f ? travelSign : -travelSign) * 0.02f;
+        s.vel.z *= u;                       // u < 0 flips direction = falls back
+        s.vel.x *= cfg.netLateralKeep;
+        s.vel.y *= cfg.netVerticalKeep;
+        s.spin.scl(cfg.netSpinKeep);
+        out.netHit = true;
     }
 
     private void tableContact(BallState s, StepContacts out) {
