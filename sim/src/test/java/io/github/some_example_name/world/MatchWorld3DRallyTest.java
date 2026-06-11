@@ -35,4 +35,39 @@ class MatchWorld3DRallyTest {
         MatchWorld3D world = new MatchWorld3D(MatchConfig.createDefault(), new RandomXS128(3));
         assertNotNull(world.getBallSpin());
     }
+
+    /**
+     * The reason the old fault-line rule died: a net clip must be scored by
+     * where the ball ends up. Fall-back onto the shooter's side costs the
+     * shooter; a dribble-over lands legally and the rally continues. Both
+     * outcomes are reachable (net jitter), deterministic per seed.
+     */
+    @Test void netClipIsScoredByWhereTheBallLands() {
+        boolean sawFallBackLoss = false, sawDribbleRally = false;
+        for (long seed = 0; seed < 40 && !(sawFallBackLoss && sawDribbleRally); seed++) {
+            MatchWorld3D world = new MatchWorld3D(MatchConfig.createDefault(), new RandomXS128(seed));
+            world.setMatchMode(MatchMode.PVP);
+            assertTrue(world.tryPlayerServe(null));
+            // redirect the serve into a low net-bound ball via the live references
+            // (close enough that it reaches the net before gravity drops it
+            // below table-contact height)
+            world.getBallPos().set(0f, 2.3f, 0.5f);
+            world.getBallVel().set(0f, 0f, -8f);
+            world.getBallSpin().setZero();
+            int livesBefore = world.getPlayerLives();
+            for (int i = 0; i < 60 * 4; i++) {
+                world.update(1f / 60f);
+                if (world.getPhase() != MatchWorld3D.Phase.OUTGOING) break;
+            }
+            if (world.getPhase() == MatchWorld3D.Phase.BOT_RESOLVE) {
+                assertEquals(livesBefore, world.getPlayerLives(),
+                    "a dribble-over that lands legally must not cost a life");
+                sawDribbleRally = true;
+            } else if (world.getPlayerLives() < livesBefore) {
+                sawFallBackLoss = true;
+            }
+        }
+        assertTrue(sawFallBackLoss, "some net clips must fall back and cost the shooter");
+        assertTrue(sawDribbleRally, "some net clips must dribble over and continue the rally");
+    }
 }
