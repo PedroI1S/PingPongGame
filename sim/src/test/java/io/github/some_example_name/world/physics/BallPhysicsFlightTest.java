@@ -101,6 +101,9 @@ class BallPhysicsFlightTest {
         PhysicsConfig cfg = flightCfg();
         BallPhysics phys = new BallPhysics(cfg);
         BallState s = launch(0f, 0f, 0f);
+        // Start well above the table so gravity never causes a table contact during
+        // the full spinDecayTauW() integration (ball falls ~401 world units from rest).
+        s.pos.y = 500f;
         s.spin.set(0f, 50f, 0f);
         phys.step(s, cfg.spinDecayTauW(), null, new StepContacts());
         assertEquals(50f / (float) Math.E, s.spin.y, 50f * 0.03f);

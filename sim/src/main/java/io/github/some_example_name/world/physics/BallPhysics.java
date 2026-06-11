@@ -75,6 +75,36 @@ public final class BallPhysics {
     }
 
     private void tableContact(BallState s, StepContacts out) {
-        // Task 3
+        if (s.vel.y >= 0f) return;
+        float contactY = PhysicsConfig.TABLE_TOP_Y + PhysicsConfig.BALL_RADIUS;
+        if (s.pos.y > contactY) return;
+        boolean overTable = Math.abs(s.pos.x) <= PhysicsConfig.TABLE_HALF_WIDTH
+                         && Math.abs(s.pos.z) <= PhysicsConfig.TABLE_HALF_LENGTH;
+        if (!overTable) return; // past the edge: keeps falling, rules score it
+        s.pos.y = contactY;
+
+        float vyIn = s.vel.y;
+        s.vel.y = -vyIn * cfg.restitution;
+
+        float r = PhysicsConfig.BALL_RADIUS;
+        float slipX = s.vel.x + s.spin.z * r;
+        float slipZ = s.vel.z - s.spin.x * r;
+        float slipLen = (float) Math.sqrt(slipX * slipX + slipZ * slipZ);
+        if (slipLen > 1e-5f) {
+            float j = Math.min(cfg.bounceFriction * (1f + cfg.restitution) * Math.abs(vyIn),
+                               (2f / 7f) * slipLen);
+            float jx = -j * slipX / slipLen;
+            float jz = -j * slipZ / slipLen;
+            s.vel.x += jx;
+            s.vel.z += jz;
+            // torque from the same impulse at the contact point, I = 2/5·r² per unit mass
+            s.spin.x += -jz / (0.4f * r);
+            s.spin.z +=  jx / (0.4f * r);
+        }
+        s.spin.scl(cfg.spinKeptOnBounce);
+
+        out.tableBounce = true;
+        out.bounceX = s.pos.x;
+        out.bounceZ = s.pos.z;
     }
 }
