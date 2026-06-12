@@ -11,6 +11,7 @@ import com.badlogic.gdx.utils.viewport.FitViewport;
 import io.github.some_example_name.assets.GameAssets;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.render.RetroPostProcess;
+import io.github.some_example_name.render.ShaderManager;
 
 /** Shared objects that live for the whole application lifetime. */
 public final class GameContext implements Disposable {
@@ -21,7 +22,7 @@ public final class GameContext implements Disposable {
     private final BitmapFont titleFont = new BitmapFont();
     private final GlyphLayout glyphLayout = new GlyphLayout();
     private final Texture loadingPixel;
-    private final GameAssets assets = new GameAssets();
+    private final GameAssets assets = GameAssets.instance();
     private final GameSession session = new GameSession();
     private final GameSettings settings = new GameSettings();
     private RetroPostProcess postProcess; // lazy — needs GL context
@@ -102,5 +103,6 @@ public final class GameContext implements Disposable {
         loadingPixel.dispose();
         assets.dispose();
         if (postProcess != null) postProcess.dispose();
+        ShaderManager.disposeInstance();
     }
 }

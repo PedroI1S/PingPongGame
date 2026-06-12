@@ -117,7 +117,9 @@ public class Main extends Game {
 
     /** VS BOT — connects to the dedicated server, then transitions to {@link NetMatchScreen}. */
     public void openMatch() {
-        setScreen(new MatchConnectScreen(this, MatchConnectScreen.Kind.BOT, "127.0.0.1"));
+        // No host argument — resolves PINGPONG_SERVER_HOST (the same rule
+        // autoLaunchServer() uses to decide whether a local server exists).
+        setScreen(new MatchConnectScreen(this, MatchConnectScreen.Kind.BOT));
     }
 
     public void openPauseMenu(Screen resumeScreen, Runnable quitAction) {

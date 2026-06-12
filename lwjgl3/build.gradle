@@ -49,6 +49,15 @@ run {
   if (os.contains('mac')) jvmArgs += "-XstartOnFirstThread"
 }
 
+// Dev tool: render the arena once and save /tmp/arena_probe.png (see ArenaProbe).
+tasks.register('arenaProbe', JavaExec) {
+  group = 'application'
+  mainClass = 'io.github.some_example_name.lwjgl3.ArenaProbe'
+  classpath = sourceSets.main.runtimeClasspath
+  workingDir = rootProject.file('assets').path
+  if (os.contains('mac')) jvmArgs += "-XstartOnFirstThread"
+}
+
 jar {
 // sets the name of the .jar file this produces to the name of the game or app, with the version after.
   archiveFileName.set("${appName}-${projectVersion}.jar")

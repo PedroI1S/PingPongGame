@@ -1,7 +1,6 @@
 package io.github.some_example_name.render;
 
 import com.badlogic.gdx.Gdx;
-import com.badlogic.gdx.files.FileHandle;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.OrthographicCamera;
@@ -72,12 +71,7 @@ public final class RetroPostProcess implements Disposable {
     private boolean                  active;
 
     public RetroPostProcess() {
-        FileHandle vert = Gdx.files.internal("shaders/retro.vert");
-        FileHandle frag = Gdx.files.internal("shaders/retro.frag");
-        shader = new ShaderProgram(vert.readString(), frag.readString());
-        if (!shader.isCompiled()) {
-            throw new IllegalStateException("retro shader compile failed:\n" + shader.getLog());
-        }
+        shader = ShaderManager.instance().get("retro");
         // Use a percentage-based default that's milder than the previous
         // absolute defaults so the pixelation isn't overly aggressive on
         // large displays.
@@ -91,7 +85,9 @@ public final class RetroPostProcess implements Disposable {
      * {@link #endAndBlit()} lands in the FBO instead of the back buffer.
      */
     public void begin() {
-        if (!enabled) {
+        // The punch-blur item must hit even when the retro filter is switched
+        // off in settings — otherwise disabling the filter grants immunity.
+        if (!enabled && punchBlur <= 0f) {
             active = false;
             return;
         }
@@ -109,7 +105,7 @@ public final class RetroPostProcess implements Disposable {
      * retro shader.  Safe to call once per frame after {@link #begin()}.
      */
     public void endAndBlit() {
-        if (!enabled || !active) return;
+        if (!active) return;
         fbo.end();
         active = false;
 
@@ -143,11 +139,19 @@ public final class RetroPostProcess implements Disposable {
             effLowX = Math.max(1f, Gdx.graphics.getWidth() * lowResPctX);
             effLowY = Math.max(1f, Gdx.graphics.getHeight() * lowResPctY);
         }
+        if (!enabled) {
+            // Punch-only pass: neutralize the retro stylization so the player
+            // who turned the filter off just gets the blur, not the pixel look.
+            // (The shader's punch branch bypasses palette/dither on its own.)
+            effLowX = Math.max(1f, Gdx.graphics.getBackBufferWidth());
+            effLowY = Math.max(1f, Gdx.graphics.getBackBufferHeight());
+        }
+        boolean styled = enabled;
         shader.setUniformf("u_lowRes",     effLowX, effLowY);
-        shader.setUniformf("u_aberration", aberration);
-        shader.setUniformf("u_dither",     dither);
-        shader.setUniformf("u_vignette",   vignette);
-        shader.setUniformf("u_warm",       warm);
+        shader.setUniformf("u_aberration", styled ? aberration : 0f);
+        shader.setUniformf("u_dither",     styled ? dither     : 0f);
+        shader.setUniformf("u_vignette",   styled ? vignette   : 0f);
+        shader.setUniformf("u_warm",       styled ? warm       : 0f);
         shader.setUniformf("u_blur",       punchBlur);
         shader.setUniform3fv("u_palette[0]", PALETTE_RGB, 0, PALETTE_RGB.length);
 
@@ -199,8 +203,8 @@ public final class RetroPostProcess implements Disposable {
 
     @Override
     public void dispose() {
-        if (fbo    != null) fbo.dispose();
-        if (shader != null) shader.dispose();
+        if (fbo != null) fbo.dispose();
+        // shader is owned (and disposed) by ShaderManager
         batch.dispose();
     }
 

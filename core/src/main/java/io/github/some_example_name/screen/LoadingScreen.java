@@ -8,6 +8,7 @@ import io.github.some_example_name.Main;
 import io.github.some_example_name.assets.ProceduralAssets;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.config.Palette;
+import io.github.some_example_name.ui.UIDraw;
 
 public final class LoadingScreen extends BaseScreen {
     private static final String[] BOOT_LOG = {

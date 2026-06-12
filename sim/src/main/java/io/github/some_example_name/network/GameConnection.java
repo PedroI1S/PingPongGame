@@ -41,6 +41,7 @@ public final class GameConnection {
         default void onWelcome(int playerNumber)                                  {}
         default void onState(float px, float py, float pz,
                              float vx, float vy, float vz,
+                             float sx, float sy, float sz,
                              int p1lives, int p2lives,
                              boolean ballVisible, int activePlayer)                {}
         default void onGameOver(int winnerPlayer)                                 {}
@@ -51,8 +52,10 @@ public final class GameConnection {
         default void onRoundOver(int winner, int p1Wins, int p2Wins) {}
         default void onItemDealt(int playerNumber, byte[] itemIds)   {}
         default void onItemUsed(int playerNumber, int itemId)        {}
-        default void onFlySpawn(float[] xs, float[] zs)              {}
-        default void onFlyKilled(int flyIndex)                       {}
+        /** @param owner player (1/2) on whose side the flies spawned */
+        default void onFlySpawn(int owner, float[] xs, float[] zs)   {}
+        /** @param owner player (1/2) whose fly list the index refers to */
+        default void onFlyKilled(int owner, int flyIndex)            {}
         // Item phase — Client → Server
         default void onItemReady()                                   {}
         default void onUseItem(int itemId)                           {}
@@ -60,10 +63,6 @@ public final class GameConnection {
         default void onHello()                                                    {}
         default void onJoin(int matchModeWire)                                    {}
         default void onClick(int screenX, int screenY, int viewportW, int viewportH) {}
-        /** @deprecated Use {@link #onClick}. */
-        default void onServe()                                                    {}
-        /** @deprecated Use {@link #onClick}. */
-        default void onHit(float vx, float vy, float vz)                         {}
         default void onBye()                                                      {}
         // Connection lifecycle
         default void onConnected()                                                {}
@@ -96,11 +95,20 @@ public final class GameConnection {
             try {
                 Socket s = new Socket();
                 s.connect(new InetSocketAddress(host, port), 8000);
+                // close() may have been called while we were connecting
+                // (e.g. the user canceled the screen) — abandon the socket
+                // instead of starting a reader on a dead connection.
+                if (conn.closed) {
+                    try { s.close(); } catch (IOException ignored) {}
+                    return;
+                }
                 s.setTcpNoDelay(true);
                 conn.socket = s;
                 conn.out    = new DataOutputStream(s.getOutputStream());
                 conn.startReader(s);
-                dispatch.execute(() -> conn.listener.onConnected());
+                if (!conn.closed) {
+                    dispatch.execute(() -> conn.listener.onConnected());
+                }
             } catch (IOException e) {
                 if (!conn.closed) {
                     String msg = e.getMessage() == null ? e.toString() : e.getMessage();
@@ -165,11 +173,13 @@ public final class GameConnection {
                     case PacketType.STATE -> {
                         float px = in.readFloat(), py = in.readFloat(), pz = in.readFloat();
                         float vx = in.readFloat(), vy = in.readFloat(), vz = in.readFloat();
+                        float sx = in.readFloat(), sy = in.readFloat(), sz = in.readFloat();
                         int   p1l = in.readInt(),  p2l = in.readInt();
                         boolean bv = in.readByte() != 0;
                         int   ap  = in.readByte() & 0xFF;
                         dispatch.execute(
-                            () -> listener.onState(px, py, pz, vx, vy, vz, p1l, p2l, bv, ap));
+                            () -> listener.onState(px, py, pz, vx, vy, vz, sx, sy, sz,
+                                                   p1l, p2l, bv, ap));
                     }
                     case PacketType.GAME_OVER -> {
                         int winner = in.readByte() & 0xFF;
@@ -202,15 +212,17 @@ public final class GameConnection {
                         dispatch.execute(() -> listener.onItemUsed(pn, id));
                     }
                     case PacketType.FLY_SPAWN -> {
+                        int owner  = in.readByte() & 0xFF;
                         int count  = in.readByte() & 0xFF;
                         float[] xs = new float[count];
                         float[] zs = new float[count];
                         for (int i = 0; i < count; i++) { xs[i] = in.readFloat(); zs[i] = in.readFloat(); }
-                        dispatch.execute(() -> listener.onFlySpawn(xs, zs));
+                        dispatch.execute(() -> listener.onFlySpawn(owner, xs, zs));
                     }
                     case PacketType.FLY_KILLED -> {
-                        int idx = in.readByte() & 0xFF;
-                        dispatch.execute(() -> listener.onFlyKilled(idx));
+                        int owner = in.readByte() & 0xFF;
+                        int idx   = in.readByte() & 0xFF;
+                        dispatch.execute(() -> listener.onFlyKilled(owner, idx));
                     }
                     case PacketType.ITEM_READY -> dispatch.execute(() -> listener.onItemReady());
                     case PacketType.USE_ITEM -> {
@@ -227,13 +239,10 @@ public final class GameConnection {
                         int vw = in.readInt(), vh = in.readInt();
                         dispatch.execute(() -> listener.onClick(sx, sy, vw, vh));
                     }
-                    case PacketType.SERVE -> dispatch.execute(() -> listener.onServe());
-                    case PacketType.HIT   -> {
-                        float vx = in.readFloat(), vy = in.readFloat(), vz = in.readFloat();
-                        dispatch.execute(() -> listener.onHit(vx, vy, vz));
-                    }
                     case PacketType.BYE   -> dispatch.execute(() -> listener.onBye());
-                    default -> { /* unknown type — cannot recover without length prefix */ }
+                    // Without a length prefix an unknown packet cannot be
+                    // skipped — the stream is desynced, so fail loudly.
+                    default -> throw new IOException("unknown packet type: " + type);
                 }
             }
         } catch (EOFException | SocketException ignored) {
@@ -242,6 +251,7 @@ public final class GameConnection {
             if (!closed) {
                 String msg = e.getMessage() == null ? e.toString() : e.getMessage();
                 dispatch.execute(() -> listener.onError(msg));
+                close(); // free the socket — the stream is unusable now
                 return;
             }
         }
@@ -260,12 +270,14 @@ public final class GameConnection {
 
     public void sendState(float px, float py, float pz,
                           float vx, float vy, float vz,
+                          float sx, float sy, float sz,
                           int p1lives, int p2lives,
                           boolean ballVisible, int activePlayer) {
         write(() -> {
             out.writeByte(PacketType.STATE);
             out.writeFloat(px); out.writeFloat(py); out.writeFloat(pz);
             out.writeFloat(vx); out.writeFloat(vy); out.writeFloat(vz);
+            out.writeFloat(sx); out.writeFloat(sy); out.writeFloat(sz);
             out.writeInt(p1lives);
             out.writeInt(p2lives);
             out.writeByte(ballVisible ? 1 : 0);
@@ -311,16 +323,21 @@ public final class GameConnection {
         });
     }
 
-    public void sendFlySpawn(float[] xs, float[] zs) {
+    public void sendFlySpawn(int owner, float[] xs, float[] zs) {
         write(() -> {
             out.writeByte(PacketType.FLY_SPAWN);
+            out.writeByte(owner);
             out.writeByte(xs.length);
             for (int i = 0; i < xs.length; i++) { out.writeFloat(xs[i]); out.writeFloat(zs[i]); }
         });
     }
 
-    public void sendFlyKilled(int flyIndex) {
-        write(() -> { out.writeByte(PacketType.FLY_KILLED); out.writeByte(flyIndex); });
+    public void sendFlyKilled(int owner, int flyIndex) {
+        write(() -> {
+            out.writeByte(PacketType.FLY_KILLED);
+            out.writeByte(owner);
+            out.writeByte(flyIndex);
+        });
     }
 
     // ── Send — Client → Server ────────────────────────────────────────────────
@@ -340,17 +357,6 @@ public final class GameConnection {
             out.writeInt(screenY);
             out.writeInt(viewportWidth);
             out.writeInt(viewportHeight);
-        });
-    }
-
-    public void sendServe() {
-        write(() -> out.writeByte(PacketType.SERVE));
-    }
-
-    public void sendHit(float vx, float vy, float vz) {
-        write(() -> {
-            out.writeByte(PacketType.HIT);
-            out.writeFloat(vx); out.writeFloat(vy); out.writeFloat(vz);
         });
     }
 

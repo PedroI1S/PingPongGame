@@ -13,8 +13,6 @@ public final class DuelistState {
 
     private int lives;
 
-    private float punchTimer;
-
     public DuelistState(ArenaSide side, String label, FighterConfig config) {
         this.side = side;
         this.label = label;
@@ -43,18 +41,6 @@ public final class DuelistState {
 
     public void addLife(int maxLives) {
         lives = Math.min(lives + 1, maxLives);
-    }
-
-    public float getPunchTimer() {
-        return punchTimer;
-    }
-
-    public void setPunchTimer(float seconds) {
-        punchTimer = seconds;
-    }
-
-    public void tickPunchTimer(float delta) {
-        punchTimer = Math.max(0f, punchTimer - delta);
     }
 
     public float getTargetScaleMultiplier() {

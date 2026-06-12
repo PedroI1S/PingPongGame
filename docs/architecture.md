@@ -19,7 +19,7 @@ PingPongGame/
 
 | Module | Depends on | Brings |
 |---|---|---|
-| `sim` | `gdx` (math only) | `MatchWorld3D`, `GameServer`, `GameConnection`, `PacketType`, `ServerPickRay`, `HitVelocity`, all model / config classes |
+| `sim` | `gdx` (math only) | `MatchWorld3D`, `GameServer`, `GameConnection`, `PacketType`, `ServerPickRay`; physics package: `BallPhysics`, `PaddleContact`, `BotPlanner`, `PhysicsConfig`, `BallState`, `StepContacts`; all model / config classes |
 | `server` | `sim` | `ServerMain` (~10 lines), application/jar Gradle setup |
 | `core` | `sim`, libGDX UI | every `Screen`, `MatchArenaRenderer`, `RetroPostProcess`, `GameContext`, `GameSession`, `GameSettings`, `InProcessServer`, `LocalServerProcess` |
 | `lwjgl3` | `core` | `Lwjgl3Launcher` |
@@ -59,6 +59,18 @@ the active screen.
 Owns: `SpriteBatch`, `FitViewport`, fonts, `GlyphLayout`, `GameAssets`,
 `GameSession`, `GameSettings`, and the lazily-built `RetroPostProcess`.
 
+`GameAssets` and `ShaderManager` are singletons (`instance()`); the
+context's accessors are the normal way to reach them, and
+`GameContext.dispose()` tears both down. Compiled `ShaderProgram`s are
+cached in `ShaderManager` and owned by it — consumers (e.g.
+`RetroPostProcess`) must not dispose them.
+
+Menu-style screens (`MenuScreen`, `PauseMenuScreen`,
+`MultiplayerLobbyScreen`) extend `MenuBaseScreen`, which owns cursor
+unprojection, input-processor wiring, and button hover/click plumbing.
+Reusable widgets (`Button`, `UIDraw`, `SettingsWidgets`) live in the
+`ui` package, separate from the screens that compose them.
+
 ### 3. `GameSession` carries the multiplayer link
 
 Persists across screens:
@@ -79,10 +91,41 @@ loadout.
 `GameAssets` wraps libGDX `AssetManager`. The visuals are six textures
 generated at startup through `ProceduralAssetsLoader` — pixel, panel,
 background, glow, aim ring, noise. The only file assets loaded are the
-three audio clips. The 3D table / net / ball / floor are `ModelBuilder`
-geometry built by `MatchArenaRenderer`.
+three audio clips and the generated voxel OBJ models (table+net, ball,
+items, fly — produced by `tools/voxel/generate_*.py`); `MatchArenaRenderer`
+falls back to `ModelBuilder` geometry if a model fails to load.
 
-### 5. Server-authoritative architecture
+### 5. Physics engine
+
+`MatchWorld3D` delegates all ball motion to `BallPhysics`. One `stepBall` call
+per server tick runs 240 Hz fixed substeps internally; per-phase rules
+(serve placement, scoring, phase transitions) stay in `MatchWorld3D`.
+
+Key decisions:
+
+- **Integrator.** Euler substep (dt = 1/240 s) with gravity, quadratic drag,
+  and Magnus force from paper SI constants (Lin, Yu & Huang, *Sensors* 2020,
+  §4.2) mapped to world units via `unitsPerMeter = 5.11` and `timeScale = 0.442`
+  (≈ half-speed slow motion). Changing `timeScale` slows or speeds every
+  trajectory without altering its physical shape.
+- **Spin-coupled bounce.** Restitution e = 0.92 (paper); friction impulse +
+  2/7 grip cap converts ground-frame slip into spin and vice versa at each
+  table contact.
+- **Net collider.** Swept check at z = 0; a random cord-jitter draw
+  (`netJitter = 0.18`) sets whether the ball dribbles over or falls back.
+  Scoring is decided by which half the ball lands on — the old
+  crossing-frame fault rule is gone.
+- **Off-center click mapping.** `PaddleContact.applyReturn` converts the
+  normalised click offset (ndx, ndy) to aim + pace + spin: top = topspin,
+  bottom = backspin, sides = aim + sidespin + corkscrew tilt; pace carries
+  35% of the incoming speed (so hard incoming balls come back hard). Reversed
+  spin transfer (−30%) makes the model self-consistent on long rallies.
+  `PaddleContact.clamp` is the anti-cheat envelope (maxSpeedSI = 14 m/s,
+  maxSpinSI = 180 rad/s).
+- **Tunables** live entirely in `PhysicsConfig`. `createDefault()` reproduces
+  today's game feel; any field can be overridden per-match.
+
+### 6. Server-authoritative architecture
 
 `GameServer` (in `sim/`) is a persistent loop:
 
@@ -122,7 +165,7 @@ Two entry points for a client to reach this server:
   path tried first by `Main.autoLaunchServer()`; the in-process server
   above is the fallback used when the jar can't be located or launched.
 
-### 6. Click-based protocol
+### 7. Click-based protocol
 
 Clients **never compute physics**. On a mouse click they emit:
 
@@ -137,14 +180,10 @@ The server reconstructs the same camera the client used
 
 - The same physics decides whether a click was a hit, regardless of who
   clicked.
-- A malicious client can't fabricate an impossible return velocity —
-  `HitVelocity.computeFromRay` is run server-side.
+- A malicious client can't fabricate an impossible return — `PaddleContact`
+  is run server-side and `PaddleContact.clamp` is the velocity/spin envelope.
 
-The legacy `HIT(vx,vy,vz)` packet still exists for compatibility but is
-not used by the live flow. `HitVelocity.sanitizeNetworkReturn` validates
-it if anything ever emits one.
-
-### 7. Networking layer
+### 8. Networking layer
 
 - `sim/network/GameConnection` — typed binary wrapper around `Socket`.
   Reader thread decodes packets and dispatches via an `Executor`. Clients
@@ -152,11 +191,15 @@ it if anything ever emits one.
   server passes `Runnable::run` (callbacks fire on the reader thread,
   queued via `LinkedBlockingQueue` into the game loop).
 - `sim/network/PacketType` — wire-format constants. See README for the
-  full packet table.
+  full packet table. The STATE packet carries 9 floats: position (px, py, pz),
+  velocity (vx, vy, vz), and spin (sx, sy, sz). Clients extrapolate with the
+  shared `BallPhysics` integrator from the last snapshot (capped at 0.25 s);
+  the only remaining client/server visual divergence is the net-cord jitter
+  roll, which resolves within ≤1 snapshot (~33 ms).
 - `sim/network/RoomCode` — host's IPv4 encoded as a 7-character base-36
   string so players don't type dotted quads.
 
-### 8. Server hit-test parity
+### 9. Server hit-test parity
 
 `MatchArenaRenderer` builds its `PerspectiveCamera` with:
 
@@ -172,7 +215,7 @@ up = (0, 1, 0)
 `cam.getPickRay(x, y)` produces the same ray the client sees. The
 viewport dimensions sent in `CLICK` make this resolution-independent.
 
-### 9. Rendering
+### 10. Rendering
 
 - **`MatchArenaRenderer`** owns the 3D scene (table / net / ball / floor)
   and the camera. Exposes `setCameraShake(dx, dy, dz)` so the match
@@ -183,7 +226,7 @@ viewport dimensions sent in `CLICK` make this resolution-independent.
 - 2D HUD over the 3D pass: lives, status text, aim ring, bounce particles
   projected back onto screen-space, optional FPS counter overlay.
 
-### 10. Settings
+### 11. Settings
 
 `GameSettings` persists via libGDX `Preferences`:
 
@@ -209,12 +252,25 @@ wraps in the post-process.
    happens in BOT mode).
 3. Ball flies +z toward P1 (INCOMING phase from the server's POV).
 4. P1 clicks → `CLICK` packet → server `handlePlayerClick(ray)` →
-   `tryHitBall(ray)` if past the net.
-5. Ball flies −z back. On bounce on the bot's side, phase →
-   `BOT_RESOLVE`. After `BOT_RESPONSE_DELAY`, the bot returns (with a
-   tuned probability) or misses.
+   `tryHitBall(ray)` if past the net. On a successful hit, `BotPlanner.plan`
+   is called immediately: it forward-simulates the ball with the same
+   integrator, finds the post-bounce apex on the bot's half, and records a
+   strike time (floored at `reactionDelay = 0.55 s`). Gaussian aim error
+   σ = 0.60 in contact-offset units gives ≈73% geometric return rate; a
+   draw outside the unit disc is a whiff.
+5. Ball flies −z back. When the strike time elapses, `BotPlanner` fires
+   `PaddleContact.applyReturn` with the planned offsets (or whiffs). A
+   swing-time OOB guard prevents the bot from swinging after the ball has
+   already scored.
 6. Scorer serves next: P1 clicks to serve when `nextServer == 1`, bot
    auto-serves when `nextServer == 2`.
+7. Difficulty knobs live in `BotPlanner.Profile` (`aimSigma`,
+   `reactionDelay`, `aggression`). `rallySpeedup` ramps outgoing pace
+   linearly from 1× to 1.6× over the rally, reusing the legacy
+   `BASE_APPROACH_DURATION` / `APPROACH_DURATION_DECAY` / `MIN_APPROACH_DURATION`
+   config keys (those keys are still live). `BOT_BASE_RETURN_CHANCE` and
+   `BOT_RESPONSE_DELAY` are legacy/unused (kept for config compatibility —
+   the dice-roll bot and freeze timer they controlled are gone).
 
 ### PvP
 
@@ -235,25 +291,24 @@ Either side's click goes through `handlePlayerClick` (P1) or
 
 ## Things that hurt and what to do
 
-- **Snapshot interpolation.** Clients currently *extrapolate* from the
-  last STATE using gravity. On internet latency (30–150 ms RTT, occasional
-  packet loss / reorder) this looks jittery. Buffer ~100 ms of incoming
-  snapshots and render the past — smooth and accurate, at the cost of a
-  small delay.
-- **Client-side prediction.** Same problem from the input side. Today the
-  click effect doesn't appear until the next STATE confirms it.
-- **HIT-velocity sanitizer is no longer reachable** in the live path —
-  `CLICK` made it dead code. Keep the function (cheap insurance for
-  future deviations) but the audit surface is now `ServerPickRay` +
-  `tryHitBall`.
+- **Snapshot interpolation.** Clients extrapolate from the last STATE packet
+  using the shared `BallPhysics` integrator (capped at 0.25 s). On internet
+  latency (30–150 ms RTT, packet loss / reorder) this still looks jittery.
+  Buffer ~100 ms of incoming snapshots and render the past — smooth and
+  accurate, at the cost of a small fixed delay. Interpolation buffering is
+  the next meaningful improvement here; only the net-cord jitter roll
+  (~33 ms gap) remains an inherent client/server divergence.
+- **Client-side prediction.** The click effect doesn't appear until the next
+  STATE confirms it.
 - **Reconnect.** A momentary disconnect kills the match. Session IDs
   + buffered STATE replay would fix it; not implemented.
 
 ## Good next refactors
 
 - Snapshot interpolation in `NetMatchScreen` (see above).
-- `ServePattern` declarative bot recipes (fast straight / slow fakeout /
-  cross / wide) instead of one `botBaseReturnChance` knob.
+- `BotPlanner.Profile` presets per difficulty level (easy/medium/hard) —
+  tuning `aimSigma` / `reactionDelay` / `aggression` gives a range from
+  beginner to expert without touching physics.
 - Event bus (`PaddleHit`, `TableBounce`, `PointScored`) so audio,
   particles, and HUD decouple from `MatchWorld3D`'s polled flags.
 - Steam Networking + Lobbies for online play (see `docs/plan.md`).

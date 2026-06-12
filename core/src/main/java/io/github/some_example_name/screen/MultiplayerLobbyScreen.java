@@ -2,12 +2,10 @@ package io.github.some_example_name.screen;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
-import com.badlogic.gdx.InputAdapter;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
-import com.badlogic.gdx.math.Vector3;
 import io.github.some_example_name.Main;
 import io.github.some_example_name.assets.ProceduralAssets;
 import io.github.some_example_name.config.GameConfig;
@@ -16,6 +14,8 @@ import io.github.some_example_name.network.GameConnection;
 import io.github.some_example_name.network.PacketType;
 import io.github.some_example_name.network.RoomCode;
 import io.github.some_example_name.model.MatchMode;
+import io.github.some_example_name.ui.Button;
+import io.github.some_example_name.ui.UIDraw;
 
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -40,12 +40,10 @@ import java.util.List;
  * connection opens to the decoded IP → on {@code WELCOME(2)} the lobby
  * transitions to {@link NetMatchScreen}.
  */
-public final class MultiplayerLobbyScreen extends BaseScreen {
+public final class MultiplayerLobbyScreen extends MenuBaseScreen {
 
     private enum Phase { IDLE, AWAITING_CODE, HOSTING_WAIT, CONNECTING, ERROR }
 
-    private final InputHandler input = new InputHandler();
-    private final Vector3 cursorWorld = new Vector3();
     private Phase phase = Phase.IDLE;
     private float clock;
 
@@ -86,7 +84,7 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
 
     @Override
     public void show() {
-        Gdx.input.setInputProcessor(input);
+        super.show();
         String localIp = discoverLocalIp();
         localRoomCode  = RoomCode.encode(localIp != null ? localIp : "127.0.0.1");
         phase      = Phase.IDLE;
@@ -94,11 +92,6 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
         codeBuffer = "";
         errorText  = null;
         cleanupPending();
-    }
-
-    @Override
-    public void hide() {
-        Gdx.input.setInputProcessor(null);
     }
 
     @Override
@@ -111,8 +104,7 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
     @Override
     public void render(float delta) {
         clock += delta;
-        updateCursorWorld();
-        for (Button b : activeButtons()) b.updateHover(cursorWorld.x, cursorWorld.y);
+        updateButtonHover();
 
         // Lobby is a menu — no retro post-process here.
         beginFrame(Palette.BG.r, Palette.BG.g, Palette.BG.b);
@@ -220,7 +212,8 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
 
     // ── Active buttons per phase ──────────────────────────────────────────────
 
-    private List<Button> activeButtons() {
+    @Override
+    protected List<Button> activeButtons() {
         List<Button> out = new ArrayList<>();
         switch (phase) {
             case IDLE          -> { out.add(hostBtn); out.add(joinBtn); out.add(backToMenuBtn); }
@@ -322,11 +315,6 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private void updateCursorWorld() {
-        cursorWorld.set(Gdx.input.getX(), Gdx.input.getY(), 0f);
-        context.getViewport().unproject(cursorWorld);
-    }
-
     private String bottomHint() {
         return switch (phase) {
             case IDLE          -> "[H] HOST    [J] JOIN    [ESC] BACK";
@@ -356,47 +344,36 @@ public final class MultiplayerLobbyScreen extends BaseScreen {
 
     // ── Input ─────────────────────────────────────────────────────────────────
 
-    private final class InputHandler extends InputAdapter {
-        @Override
-        public boolean keyDown(int k) {
-            if (k == Input.Keys.ESCAPE) { handleEscape(); return true; }
-            switch (phase) {
-                case IDLE -> {
-                    if (k == Input.Keys.H) startHosting();
-                    else if (k == Input.Keys.J) startJoining();
-                }
-                case AWAITING_CODE -> {
-                    if (k == Input.Keys.ENTER) confirmCode();
-                    else if (k == Input.Keys.BACKSPACE && !codeBuffer.isEmpty())
-                        codeBuffer = codeBuffer.substring(0, codeBuffer.length() - 1);
-                }
-                case ERROR -> {
-                    if (k == Input.Keys.ENTER) phase = Phase.IDLE;
-                }
-                default -> {}
+    @Override
+    protected boolean onKeyDown(int k) {
+        if (k == Input.Keys.ESCAPE) { handleEscape(); return true; }
+        switch (phase) {
+            case IDLE -> {
+                if (k == Input.Keys.H) startHosting();
+                else if (k == Input.Keys.J) startJoining();
             }
+            case AWAITING_CODE -> {
+                if (k == Input.Keys.ENTER) confirmCode();
+                else if (k == Input.Keys.BACKSPACE && !codeBuffer.isEmpty())
+                    codeBuffer = codeBuffer.substring(0, codeBuffer.length() - 1);
+            }
+            case ERROR -> {
+                if (k == Input.Keys.ENTER) phase = Phase.IDLE;
+            }
+            default -> {}
+        }
+        return true;
+    }
+
+    @Override
+    protected boolean onKeyTyped(char ch) {
+        if (phase != Phase.AWAITING_CODE) return false;
+        if (codeBuffer.length() >= RoomCode.LENGTH) return false;
+        if (RoomCode.isValidChar(ch)) {
+            codeBuffer += Character.toUpperCase(ch);
             return true;
         }
-
-        @Override
-        public boolean keyTyped(char ch) {
-            if (phase != Phase.AWAITING_CODE) return false;
-            if (codeBuffer.length() >= RoomCode.LENGTH) return false;
-            if (RoomCode.isValidChar(ch)) {
-                codeBuffer += Character.toUpperCase(ch);
-                return true;
-            }
-            return false;
-        }
-
-        @Override
-        public boolean touchDown(int sx, int sy, int pointer, int btn) {
-            updateCursorWorld();
-            for (Button b : activeButtons()) {
-                if (b.tryClick(cursorWorld.x, cursorWorld.y)) return true;
-            }
-            return false;
-        }
+        return false;
     }
 
     private void handleEscape() {

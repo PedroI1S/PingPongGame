@@ -34,7 +34,6 @@ public final class GameSettings {
     private static final String KEY_MASTER_VOL     = "masterVol";
     private static final String KEY_MUSIC_VOL      = "musicVol";
     private static final String KEY_SFX_VOL        = "sfxVol";
-    private static final String KEY_UI_VOL         = "uiVol";
     private static final String KEY_FPS_COUNTER    = "fpsCounter";
     private static final String KEY_SCREEN_SHAKE   = "screenShake";
 
@@ -52,7 +51,6 @@ public final class GameSettings {
     private int masterVolume = 80;
     private int musicVolume  = 60;
     private int sfxVolume    = 90;
-    private int uiVolume     = 70;
 
     // ── Game preferences ──────────────────────────────────────────────────────
     private boolean showFpsCounter = false;
@@ -74,7 +72,6 @@ public final class GameSettings {
         masterVolume   = clampVol(prefs.getInteger(KEY_MASTER_VOL, masterVolume));
         musicVolume    = clampVol(prefs.getInteger(KEY_MUSIC_VOL,  musicVolume));
         sfxVolume      = clampVol(prefs.getInteger(KEY_SFX_VOL,    sfxVolume));
-        uiVolume       = clampVol(prefs.getInteger(KEY_UI_VOL,     uiVolume));
         showFpsCounter = prefs.getBoolean(KEY_FPS_COUNTER, showFpsCounter);
         screenShake    = prefs.getBoolean(KEY_SCREEN_SHAKE, screenShake);
     }
@@ -89,7 +86,6 @@ public final class GameSettings {
         prefs.putInteger(KEY_MASTER_VOL, masterVolume);
         prefs.putInteger(KEY_MUSIC_VOL,  musicVolume);
         prefs.putInteger(KEY_SFX_VOL,    sfxVolume);
-        prefs.putInteger(KEY_UI_VOL,     uiVolume);
         prefs.putBoolean(KEY_FPS_COUNTER, showFpsCounter);
         prefs.putBoolean(KEY_SCREEN_SHAKE, screenShake);
         prefs.flush();
@@ -105,8 +101,6 @@ public final class GameSettings {
     public void setMusicVolume(int v)     { musicVolume = clampVol(v); save(); }
     public int  getSfxVolume()            { return sfxVolume; }
     public void setSfxVolume(int v)       { sfxVolume = clampVol(v); save(); }
-    public int  getUiVolume()             { return uiVolume; }
-    public void setUiVolume(int v)        { uiVolume = clampVol(v); save(); }
     /** Composite gain for music — master × music. */
     public float getMusicGain()           { return masterVolume / 100f * musicVolume / 100f; }
     /** Composite gain for SFX — master × sfx. */

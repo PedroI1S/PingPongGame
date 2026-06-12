@@ -95,9 +95,21 @@ public final class GameServer {
     private void runBestOf3() throws Exception {
         MatchLobby lobby = new MatchLobby();
         System.out.println("[GameServer] Waiting for JOIN...");
+        MatchMode mode = null;
         serverSocket.setSoTimeout(200);
         try {
-            while (!lobby.isReady() && !shutdown) {
+            while (true) {
+                if (shutdown) return;
+                // Snapshot under the lobby lock — a waiter can be evicted by
+                // onLeave() between an isReady() check and the field reads.
+                synchronized (lobby) {
+                    if (lobby.isReady()) {
+                        p1 = lobby.p1;
+                        p2 = lobby.p2;
+                        mode = lobby.mode;
+                        break;
+                    }
+                }
                 try {
                     Socket socket = serverSocket.accept();
                     GameConnection[] connRef = new GameConnection[1];
@@ -108,11 +120,6 @@ public final class GameServer {
         } finally {
             serverSocket.setSoTimeout(0);
         }
-        if (shutdown) return;
-
-        p1 = lobby.p1;
-        p2 = lobby.p2;
-        MatchMode mode = lobby.mode;
         byte modeWire = mode == MatchMode.BOT ? PacketType.MODE_BOT : PacketType.MODE_PVP;
         p1.sendMatchReady(modeWire);
         if (p2 != null) p2.sendMatchReady(modeWire);
@@ -187,13 +194,14 @@ public final class GameServer {
                 broadcastItemUsed(w.getItemUsedPlayer(), w.getItemUsedId());
             }
             if (w.consumeFlySpawnEvent()) {
-                broadcastFlySpawn(w.getFlySpawnXs(), w.getFlySpawnZs());
+                broadcastFlySpawn(w.getFlySpawnOwner(), w.getFlySpawnXs(), w.getFlySpawnZs());
             }
             int killed = w.consumeFlyKilledIndex();
-            if (killed >= 0) broadcastFlyKilled(killed);
+            if (killed >= 0) broadcastFlyKilled(w.getFlyKilledOwner(), killed);
 
             if (w.consumePaddleHitEvent())  sendSfxToAll(PacketType.SFX_PADDLE);
             if (w.consumeTableBounceEvent()) sendSfxToAll(PacketType.SFX_TABLE);
+            if (w.consumeNetHitEvent())      sendSfxToAll(PacketType.SFX_TABLE);
 
             stateAcc += delta;
             if (stateAcc >= STATE_DT) {
@@ -232,15 +240,18 @@ public final class GameServer {
         GameConnection c1 = p1, c2 = p2;   // capture before shutdown() can null them
         Vector3 pos = w.getBallPos();
         Vector3 vel = w.getBallVel();
+        Vector3 spin = w.getBallSpin();
         boolean vis = w.isBallVisible();
         int ap = w.getActivePlayer();
         int p1l = w.getPlayerLives();
         int p2l = w.getP2Lives();
         if (c1 != null) {
-            c1.sendState(pos.x, pos.y, pos.z, vel.x, vel.y, vel.z, p1l, p2l, vis, ap);
+            c1.sendState(pos.x, pos.y, pos.z, vel.x, vel.y, vel.z,
+                         spin.x, spin.y, spin.z, p1l, p2l, vis, ap);
         }
         if (c2 != null) {
-            c2.sendState(pos.x, pos.y, pos.z, vel.x, vel.y, vel.z, p1l, p2l, vis, ap);
+            c2.sendState(pos.x, pos.y, pos.z, vel.x, vel.y, vel.z,
+                         spin.x, spin.y, spin.z, p1l, p2l, vis, ap);
         }
     }
 
@@ -270,16 +281,16 @@ public final class GameServer {
         if (c2 != null) c2.sendItemUsed(playerNumber, itemId);
     }
 
-    private void broadcastFlySpawn(float[] xs, float[] zs) {
+    private void broadcastFlySpawn(int owner, float[] xs, float[] zs) {
         GameConnection c1 = p1, c2 = p2;
-        if (c1 != null) c1.sendFlySpawn(xs, zs);
-        if (c2 != null) c2.sendFlySpawn(xs, zs);
+        if (c1 != null) c1.sendFlySpawn(owner, xs, zs);
+        if (c2 != null) c2.sendFlySpawn(owner, xs, zs);
     }
 
-    private void broadcastFlyKilled(int idx) {
+    private void broadcastFlyKilled(int owner, int idx) {
         GameConnection c1 = p1, c2 = p2;
-        if (c1 != null) c1.sendFlyKilled(idx);
-        if (c2 != null) c2.sendFlyKilled(idx);
+        if (c1 != null) c1.sendFlyKilled(owner, idx);
+        if (c2 != null) c2.sendFlyKilled(owner, idx);
     }
 
     private void sendRoundOverToAll(int winner, int p1Wins, int p2Wins) {
@@ -329,6 +340,28 @@ public final class GameServer {
             if (mode == MatchMode.BOT) return p1 != null;
             return p1 != null && p2 != null;
         }
+
+        /**
+         * Evicts a connection that dropped while waiting in the lobby.
+         * Without this, a canceled HOST leaves a dead {@code p1} behind with
+         * the mode locked — VS BOT joins get rejected forever and the next
+         * PVP join starts a zombie match against the dead connection.
+         */
+        synchronized void onLeave(GameConnection conn) {
+            if (p1 == conn) p1 = null;
+            if (p2 == conn) p2 = null;
+            if (p1 == null && p2 == null) {
+                modeLocked = false;
+                mode = null;
+            }
+            // A lone waiter who joined second keeps the match alive as host.
+            if (p1 == null && p2 != null) {
+                p1 = p2;
+                p2 = null;
+                p1.sendWelcome(1);
+                p1.sendWaiting();
+            }
+        }
     }
 
     private final class LobbyListener implements GameConnection.Listener {
@@ -344,6 +377,23 @@ public final class GameServer {
         public void onJoin(int matchModeWire) {
             MatchMode m = matchModeWire == PacketType.MODE_BOT ? MatchMode.BOT : MatchMode.PVP;
             lobby.onJoin(self[0], m);
+        }
+
+        @Override
+        public void onBye() {
+            lobby.onLeave(self[0]);
+            self[0].close();
+        }
+
+        @Override
+        public void onDisconnected() {
+            lobby.onLeave(self[0]);
+        }
+
+        @Override
+        public void onError(String reason) {
+            lobby.onLeave(self[0]);
+            self[0].close();
         }
     }
 
@@ -365,16 +415,6 @@ public final class GameServer {
                 } else {
                     w.handleOpponentClick(ray);
                 }
-            });
-        }
-
-        @Override
-        public void onServe() {
-            MatchWorld3D w = world;
-            if (w == null || !matchRunning) return;
-            actions.offer(() -> {
-                if (playerNumber == 1) w.tryPlayerServe();
-                else w.tryClientServe();
             });
         }
 

@@ -1,7 +1,6 @@
 package io.github.some_example_name.core;
 
 import com.badlogic.gdx.math.RandomXS128;
-import io.github.some_example_name.model.MatchConfig;
 import io.github.some_example_name.model.MatchMode;
 import io.github.some_example_name.model.MatchOutcome;
 import io.github.some_example_name.network.GameConnection;
@@ -24,7 +23,6 @@ public final class GameSession {
      */
     private Runnable localServerStop;
 
-    private String localName  = "P1";
     private String remoteName = "P2";
 
     public MatchOutcome getLastOutcome()        { return lastOutcome; }
@@ -34,7 +32,6 @@ public final class GameSession {
     public GameConnection getGameConnection() { return gameConnection; }
     public int            getPlayerNumber()   { return playerNumber; }
     public MatchMode      getMatchMode()      { return matchMode; }
-    public String         getLocalName()      { return localName; }
     public String         getRemoteName()     { return remoteName; }
 
     public boolean isMultiplayer() { return gameConnection != null; }
@@ -53,13 +50,11 @@ public final class GameSession {
         this.gameConnection = conn;
         this.playerNumber   = playerNumber;
         this.matchMode      = mode;
-        this.localName      = playerNumber == 1 ? "P1" : "P2";
         this.remoteName     = mode == MatchMode.BOT
             ? "Bot"
             : (playerNumber == 1 ? "P2" : "P1");
     }
 
-    public void setLocalName(String name)  { this.localName  = name; }
     public void setRemoteName(String name) { this.remoteName = name; }
 
     public void clearMultiplayer() {
@@ -73,9 +68,5 @@ public final class GameSession {
         }
         playerNumber = 0;
         matchMode = MatchMode.PVP;
-    }
-
-    public MatchConfig buildMatchConfig() {
-        return MatchConfig.createDefault();
     }
 }

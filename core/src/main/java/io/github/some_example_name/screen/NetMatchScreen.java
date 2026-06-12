@@ -22,7 +22,10 @@ import io.github.some_example_name.render.ItemPhaseRenderer;
 import io.github.some_example_name.render.MatchArenaRenderer;
 import io.github.some_example_name.world.FlyState;
 import io.github.some_example_name.world.ImpactParticle3D;
-import io.github.some_example_name.world.MatchWorld3D;
+import io.github.some_example_name.world.physics.BallPhysics;
+import io.github.some_example_name.world.physics.BallState;
+import io.github.some_example_name.world.physics.PhysicsConfig;
+import io.github.some_example_name.world.physics.StepContacts;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -41,6 +44,10 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
     private final Vector3 snapBallPos  = new Vector3();
     private final Vector3 snapBallVel  = new Vector3();
+    private final Vector3 snapBallSpin = new Vector3();
+    private final BallPhysics clientPhysics = new BallPhysics(PhysicsConfig.createDefault());
+    private final BallState extrapState = new BallState();
+    private final StepContacts extrapContacts = new StepContacts();
     private float   snapAge;
     private boolean ballVisible;
     private int     activePlayer;
@@ -90,6 +97,10 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     private Sound paddleHitSfx;
     private Sound tableHitSfx;
     private Music backgroundMusic;
+
+    // ── Fly buzz loop — runs while any fly is alive on either side ────────────
+    private boolean flyBuzzPlaying;
+    private long flyBuzzId;
 
     private NetInput netInput;
     private RandomXS128 rng;
@@ -144,9 +155,12 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
     @Override
     public void hide() {
+        // Keep arena + itemPhaseRenderer alive: hide() also fires when the
+        // pause menu opens, and resume must not lose the loaded models.
+        // Real teardown happens in dispose(), called from returnToMenu().
         Gdx.input.setInputProcessor(null);
         if (backgroundMusic != null) backgroundMusic.stop();
-        if (itemPhaseRenderer != null) { itemPhaseRenderer.dispose(); itemPhaseRenderer = null; }
+        stopFlyBuzz();
     }
 
     @Override
@@ -160,7 +174,8 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     public void dispose() {
         particlePool.freeAll(particles);
         particles.clear();
-        if (arena != null) arena.dispose();
+        if (arena != null) { arena.dispose(); arena = null; }
+        if (itemPhaseRenderer != null) { itemPhaseRenderer.dispose(); itemPhaseRenderer = null; }
     }
 
     @Override
@@ -170,6 +185,8 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         updateSimulation(delta);
         updateCameraShake(delta);
         arena.unprojectCursorOntoTable(netInput.lastMouseX, netInput.lastMouseY);
+        arena.tickFlyBuzz(delta); // before render3DScene so this frame's bob is drawn
+        arena.setLivesDisplay(p1lives, p2lives); // diegetic bulb racks
 
         context.getPostProcess().begin();
         arena.render3DScene(ballVisible);
@@ -180,14 +197,14 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             // getPickRay() handles Y-inversion internally, pass raw screen coords.
             com.badlogic.gdx.math.collision.Ray hoverRay =
                 arena.getCamera().getPickRay(netInput.lastMouseX, netInput.lastMouseY);
-            itemPhaseRenderer.updateHover(hoverRay, 1); // p1Entries = myItems always
+            if (itemPhaseRenderer.updateHover(hoverRay, 1)) { // p1Entries = myItems always
+                context.getAssets().getUiHoverSfx().play(getSfxGain() * 0.4f);
+            }
             itemPhaseRenderer.update(delta);
             arena.getModelBatch().begin(arena.getCamera());
             itemPhaseRenderer.render(arena.getModelBatch(), arena.getEnvironment());
             arena.getModelBatch().end();
         }
-        // Fly buzz animation
-        if (arena != null) arena.tickFlyBuzz(delta);
 
         context.getViewport().apply(true);
 
@@ -230,12 +247,14 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         snapAge += delta;
 
         if (ballVisible) {
-            float t  = snapAge;
-            float ex = snapBallPos.x + snapBallVel.x * t;
-            float ez = snapBallPos.z + snapBallVel.z * t;
-            float ey = extrapolateBallY(snapBallPos.y, snapBallVel.y, t);
-            renderedBallPos.set(ex, ey, ez);
-            arena.setBallPosition(ex, ey, ez);
+            extrapState.pos.set(snapBallPos);
+            extrapState.vel.set(snapBallVel);
+            extrapState.spin.set(snapBallSpin);
+            clientPhysics.resetAccumulator();
+            // cap so packet loss can't run physics far past the last snapshot
+            clientPhysics.step(extrapState, Math.min(snapAge, 0.25f), null, extrapContacts);
+            renderedBallPos.set(extrapState.pos);
+            arena.setBallPosition(extrapState.pos.x, extrapState.pos.y, extrapState.pos.z);
         }
 
         for (int i = particles.size - 1; i >= 0; i--) {
@@ -244,33 +263,31 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             }
         }
 
+        updateFlyBuzz();
+
         if (netInput.consumeClick() && !matchOver && !disconnected) {
             handleClick();
         }
     }
 
-    /**
-     * Integrates Y position under gravity with table-bounce reflections.
-     * Mirrors MatchWorld3D physics so the ball looks correct between 30 Hz snapshots.
-     */
-    private static float extrapolateBallY(float y0, float vy0, float t) {
-        final float floor = MatchWorld3D.TABLE_TOP_Y + MatchWorld3D.BALL_RADIUS;
-        final float restitution = 0.7f; // matches MatchWorld3D.BOUNCE_RESTITUTION
-        float y  = y0;
-        float vy = vy0;
-        float remaining = t;
-        while (remaining > 0.001f) {
-            float dt = Math.min(remaining, 0.005f);
-            vy -= MatchWorld3D.GRAVITY * dt;
-            y  += vy * dt;
-            if (y < floor && vy < 0f) {
-                y  = floor;
-                vy = -vy * restitution;
-                if (Math.abs(vy) < 0.5f) vy = 0f;
-            }
-            remaining -= dt;
+    /** Starts/stops the looping wing buzz to match living flies on the table. */
+    private void updateFlyBuzz() {
+        int alive = 0;
+        for (FlyState f : myFlies)  if (f.alive) alive++;
+        for (FlyState f : oppFlies) if (f.alive) alive++;
+        if (alive > 0 && !flyBuzzPlaying) {
+            flyBuzzId = context.getAssets().getFlyBuzzSfx().loop(getSfxGain() * 0.25f);
+            flyBuzzPlaying = true;
+        } else if (alive == 0 && flyBuzzPlaying) {
+            stopFlyBuzz();
         }
-        return y;
+    }
+
+    private void stopFlyBuzz() {
+        if (flyBuzzPlaying) {
+            context.getAssets().getFlyBuzzSfx().stop(flyBuzzId);
+            flyBuzzPlaying = false;
+        }
     }
 
     /** Decays any active shake and applies the current offset to the camera. */
@@ -310,6 +327,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
                 // p1Entries always holds myItems regardless of absolute player number.
                 ItemType picked = itemPhaseRenderer.pickItem(ray, 1);
                 if (picked != null) {
+                    context.getAssets().getUiClickSfx().play(getSfxGain() * 0.6f);
                     if (conn != null) conn.sendUseItem(picked.getId());
                     return; // consumed by item use
                 }
@@ -318,6 +336,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             if (!itemReadySent) {
                 itemReadySent = true;
                 inItemPhase = false;
+                context.getAssets().getUiClickSfx().play(getSfxGain() * 0.6f);
                 if (conn != null) conn.sendItemReady();
             }
             return; // consume — no CLICK sent to server during ITEM_PHASE
@@ -352,6 +371,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     @Override
     public void onState(float px, float py, float pz,
                         float vx, float vy, float vz,
+                        float sx, float sy, float sz,
                         int p1l, int p2l,
                         boolean visible, int ap) {
         waitingForOpponent = false;
@@ -370,6 +390,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         }
         snapBallPos.set(px, py, pz);
         snapBallVel.set(vx, vy, vz);
+        snapBallSpin.set(sx, sy, sz);
         snapAge      = 0f;
         ballVisible  = visible;
         activePlayer = ap;
@@ -380,8 +401,13 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         int myCurr   = (playerNumber == 1) ? p1l         : p2l;
         int themPrev = (playerNumber == 1) ? prevP2Lives : prevP1Lives;
         int themCurr = (playerNumber == 1) ? p2l         : p1l;
-        if (myCurr < myPrev)        triggerShake(0.40f, 0.55f);
-        else if (themCurr < themPrev) triggerShake(0.20f, 0.20f);
+        if (myCurr < myPrev) {
+            triggerShake(0.40f, 0.55f);
+            context.getAssets().getLifeLostSfx().play(getSfxGain() * 0.8f);
+        } else if (themCurr < themPrev) {
+            triggerShake(0.20f, 0.20f);
+            context.getAssets().getLifeLostSfx().play(getSfxGain() * 0.45f);
+        }
 
         p1lives   = p1l;
         p2lives   = p2l;
@@ -430,6 +456,13 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     @Override
     public void onItemDealt(int forPlayer, byte[] itemIds) {
         Gdx.app.postRunnable(() -> {
+            // A new item phase means the server cleared all effects — drop
+            // any leftover fly visuals from the previous rally.
+            if (!inItemPhase && (!myFlies.isEmpty() || !oppFlies.isEmpty())) {
+                myFlies.clear();
+                oppFlies.clear();
+                if (arena != null) arena.setFlies(myFlies, oppFlies);
+            }
             List<ItemType> target = (forPlayer == playerNumber) ? myItems : oppItems;
             for (byte id : itemIds) {
                 ItemType t = ItemType.fromId(id);
@@ -446,6 +479,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         Gdx.app.postRunnable(() -> {
             ItemType t = ItemType.fromId((byte) itemId);
             if (t == null) return;
+            context.getAssets().getItemUseSfx().play(getSfxGain() * 0.7f);
             List<ItemType> inv = (byPlayer == playerNumber) ? myItems : oppItems;
             inv.remove(t);
             if (itemPhaseRenderer != null) {
@@ -464,22 +498,22 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     }
 
     @Override
-    public void onFlySpawn(float[] xs, float[] zs) {
+    public void onFlySpawn(int owner, float[] xs, float[] zs) {
         Gdx.app.postRunnable(() -> {
-            myFlies.clear();
-            for (int i = 0; i < xs.length; i++) myFlies.add(new FlyState(xs[i], zs[i]));
+            // Each batch replaces only the owner's side, so both players can
+            // have flies at once (e.g. both used FLY_BAIT this item phase).
+            List<FlyState> target = (owner == playerNumber) ? myFlies : oppFlies;
+            target.clear();
+            for (int i = 0; i < xs.length; i++) target.add(new FlyState(xs[i], zs[i]));
             if (arena != null) arena.setFlies(myFlies, oppFlies);
         });
     }
 
     @Override
-    public void onFlyKilled(int flyIndex) {
+    public void onFlyKilled(int owner, int flyIndex) {
         Gdx.app.postRunnable(() -> {
-            if (flyIndex < myFlies.size()) myFlies.get(flyIndex).alive = false;
-            else {
-                int oppIdx = flyIndex - myFlies.size();
-                if (oppIdx < oppFlies.size()) oppFlies.get(oppIdx).alive = false;
-            }
+            List<FlyState> target = (owner == playerNumber) ? myFlies : oppFlies;
+            if (flyIndex < target.size()) target.get(flyIndex).alive = false;
             if (arena != null) arena.setFlies(myFlies, oppFlies);
         });
     }
@@ -491,19 +525,21 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
     @Override
     public void onDisconnected() {
-        disconnected = true;
+        // The server closes connections right after GAME_OVER — that teardown
+        // is expected, so don't stack the disconnect overlay on the outcome one.
+        if (!matchOver) disconnected = true;
         shutdownConn();
     }
 
     @Override
     public void onError(String reason) {
-        disconnected = true;
+        if (!matchOver) disconnected = true;
         shutdownConn();
     }
 
     @Override
     public void onBye() {
-        disconnected = true;
+        if (!matchOver) disconnected = true;
         shutdownConn();
     }
 
@@ -554,6 +590,10 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
     private String deriveStatus() {
         if (waitingForOpponent) return "Waiting for opponent to connect...";
+        if (inItemPhase) return "Pick your items, then click READY.";
+        // READY already sent but the server hasn't advanced past the item
+        // phase (activePlayer stays 0 until the next serve is prepared).
+        if (itemReadySent && activePlayer == 0) return "Waiting for opponent's items...";
         if (!ballVisible) {
             if (activePlayer == playerNumber) return "Click anywhere to serve.";
             return "Waiting for opponent to serve...";
@@ -585,6 +625,9 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         if (conn != null) conn.sendBye();
         shutdownConn();
         game.openMenu();
+        // libGDX never calls Screen.dispose() on its own — without this the
+        // arena's models and textures leak once per match.
+        dispose();
     }
 
     public void exitToMenu() {
