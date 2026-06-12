@@ -529,6 +529,13 @@ public final class MatchWorld3D {
         phase = Phase.OUTGOING;
         statusText = "P1 serves. P2 must return.";
         paddleHitEvent = true;
+        // Every ball launched toward the bot needs a plan — serves included,
+        // exactly like tryHitBall, or the bot idles out the BOT_RESOLVE timer.
+        if (matchMode != MatchMode.PVP) {
+            botPlanner.plan(ball, botProfile, random, botPlan);
+            botPlanClock = 0f;
+            botPlanArmed = true;
+        }
         return true;
     }
 
