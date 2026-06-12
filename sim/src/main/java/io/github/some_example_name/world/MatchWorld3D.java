@@ -38,7 +38,6 @@ public final class MatchWorld3D {
     public static final float NET_TOP_Y         = PhysicsConfig.NET_TOP_Y;
     public static final float NET_HEIGHT        = NET_TOP_Y - TABLE_TOP_Y;
     public static final float BALL_RADIUS       = PhysicsConfig.BALL_RADIUS;
-    public static final float GRAVITY           = 9.8f;
 
     private static final int MAX_PARTICLES = 64;
 

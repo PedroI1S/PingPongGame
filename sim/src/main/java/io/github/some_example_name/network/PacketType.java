@@ -19,6 +19,7 @@ public final class PacketType {
      * Payload:
      * {@code float px, py, pz} (ball position),
      * {@code float vx, vy, vz} (ball velocity),
+     * {@code float sx, sy, sz} (ball spin, world angular velocity),
      * {@code int p1lives, p2lives},
      * {@code byte ballVisible} (0/1),
      * {@code byte activePlayer} (0 = nobody, 1 = P1, 2 = P2).

@@ -240,15 +240,18 @@ public final class GameServer {
         GameConnection c1 = p1, c2 = p2;   // capture before shutdown() can null them
         Vector3 pos = w.getBallPos();
         Vector3 vel = w.getBallVel();
+        Vector3 spin = w.getBallSpin();
         boolean vis = w.isBallVisible();
         int ap = w.getActivePlayer();
         int p1l = w.getPlayerLives();
         int p2l = w.getP2Lives();
         if (c1 != null) {
-            c1.sendState(pos.x, pos.y, pos.z, vel.x, vel.y, vel.z, p1l, p2l, vis, ap);
+            c1.sendState(pos.x, pos.y, pos.z, vel.x, vel.y, vel.z,
+                         spin.x, spin.y, spin.z, p1l, p2l, vis, ap);
         }
         if (c2 != null) {
-            c2.sendState(pos.x, pos.y, pos.z, vel.x, vel.y, vel.z, p1l, p2l, vis, ap);
+            c2.sendState(pos.x, pos.y, pos.z, vel.x, vel.y, vel.z,
+                         spin.x, spin.y, spin.z, p1l, p2l, vis, ap);
         }
     }
 

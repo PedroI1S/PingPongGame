@@ -22,7 +22,10 @@ import io.github.some_example_name.render.ItemPhaseRenderer;
 import io.github.some_example_name.render.MatchArenaRenderer;
 import io.github.some_example_name.world.FlyState;
 import io.github.some_example_name.world.ImpactParticle3D;
-import io.github.some_example_name.world.MatchWorld3D;
+import io.github.some_example_name.world.physics.BallPhysics;
+import io.github.some_example_name.world.physics.BallState;
+import io.github.some_example_name.world.physics.PhysicsConfig;
+import io.github.some_example_name.world.physics.StepContacts;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -41,6 +44,10 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
     private final Vector3 snapBallPos  = new Vector3();
     private final Vector3 snapBallVel  = new Vector3();
+    private final Vector3 snapBallSpin = new Vector3();
+    private final BallPhysics clientPhysics = new BallPhysics(PhysicsConfig.createDefault());
+    private final BallState extrapState = new BallState();
+    private final StepContacts extrapContacts = new StepContacts();
     private float   snapAge;
     private boolean ballVisible;
     private int     activePlayer;
@@ -240,12 +247,14 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         snapAge += delta;
 
         if (ballVisible) {
-            float t  = snapAge;
-            float ex = snapBallPos.x + snapBallVel.x * t;
-            float ez = snapBallPos.z + snapBallVel.z * t;
-            float ey = extrapolateBallY(snapBallPos.y, snapBallVel.y, t);
-            renderedBallPos.set(ex, ey, ez);
-            arena.setBallPosition(ex, ey, ez);
+            extrapState.pos.set(snapBallPos);
+            extrapState.vel.set(snapBallVel);
+            extrapState.spin.set(snapBallSpin);
+            clientPhysics.resetAccumulator();
+            // cap so packet loss can't run physics far past the last snapshot
+            clientPhysics.step(extrapState, Math.min(snapAge, 0.25f), null, extrapContacts);
+            renderedBallPos.set(extrapState.pos);
+            arena.setBallPosition(extrapState.pos.x, extrapState.pos.y, extrapState.pos.z);
         }
 
         for (int i = particles.size - 1; i >= 0; i--) {
@@ -279,30 +288,6 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             context.getAssets().getFlyBuzzSfx().stop(flyBuzzId);
             flyBuzzPlaying = false;
         }
-    }
-
-    /**
-     * Integrates Y position under gravity with table-bounce reflections.
-     * Mirrors MatchWorld3D physics so the ball looks correct between 30 Hz snapshots.
-     */
-    private static float extrapolateBallY(float y0, float vy0, float t) {
-        final float floor = MatchWorld3D.TABLE_TOP_Y + MatchWorld3D.BALL_RADIUS;
-        final float restitution = 0.7f; // matches MatchWorld3D.BOUNCE_RESTITUTION
-        float y  = y0;
-        float vy = vy0;
-        float remaining = t;
-        while (remaining > 0.001f) {
-            float dt = Math.min(remaining, 0.005f);
-            vy -= MatchWorld3D.GRAVITY * dt;
-            y  += vy * dt;
-            if (y < floor && vy < 0f) {
-                y  = floor;
-                vy = -vy * restitution;
-                if (Math.abs(vy) < 0.5f) vy = 0f;
-            }
-            remaining -= dt;
-        }
-        return y;
     }
 
     /** Decays any active shake and applies the current offset to the camera. */
@@ -386,6 +371,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     @Override
     public void onState(float px, float py, float pz,
                         float vx, float vy, float vz,
+                        float sx, float sy, float sz,
                         int p1l, int p2l,
                         boolean visible, int ap) {
         waitingForOpponent = false;
@@ -404,6 +390,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         }
         snapBallPos.set(px, py, pz);
         snapBallVel.set(vx, vy, vz);
+        snapBallSpin.set(sx, sy, sz);
         snapAge      = 0f;
         ballVisible  = visible;
         activePlayer = ap;

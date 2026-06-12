@@ -41,6 +41,7 @@ public final class GameConnection {
         default void onWelcome(int playerNumber)                                  {}
         default void onState(float px, float py, float pz,
                              float vx, float vy, float vz,
+                             float sx, float sy, float sz,
                              int p1lives, int p2lives,
                              boolean ballVisible, int activePlayer)                {}
         default void onGameOver(int winnerPlayer)                                 {}
@@ -172,11 +173,13 @@ public final class GameConnection {
                     case PacketType.STATE -> {
                         float px = in.readFloat(), py = in.readFloat(), pz = in.readFloat();
                         float vx = in.readFloat(), vy = in.readFloat(), vz = in.readFloat();
+                        float sx = in.readFloat(), sy = in.readFloat(), sz = in.readFloat();
                         int   p1l = in.readInt(),  p2l = in.readInt();
                         boolean bv = in.readByte() != 0;
                         int   ap  = in.readByte() & 0xFF;
                         dispatch.execute(
-                            () -> listener.onState(px, py, pz, vx, vy, vz, p1l, p2l, bv, ap));
+                            () -> listener.onState(px, py, pz, vx, vy, vz, sx, sy, sz,
+                                                   p1l, p2l, bv, ap));
                     }
                     case PacketType.GAME_OVER -> {
                         int winner = in.readByte() & 0xFF;
@@ -267,12 +270,14 @@ public final class GameConnection {
 
     public void sendState(float px, float py, float pz,
                           float vx, float vy, float vz,
+                          float sx, float sy, float sz,
                           int p1lives, int p2lives,
                           boolean ballVisible, int activePlayer) {
         write(() -> {
             out.writeByte(PacketType.STATE);
             out.writeFloat(px); out.writeFloat(py); out.writeFloat(pz);
             out.writeFloat(vx); out.writeFloat(vy); out.writeFloat(vz);
+            out.writeFloat(sx); out.writeFloat(sy); out.writeFloat(sz);
             out.writeInt(p1lives);
             out.writeInt(p2lives);
             out.writeByte(ballVisible ? 1 : 0);
