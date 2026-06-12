@@ -13,7 +13,12 @@ public final class BotPlanner {
 
     /** Difficulty knobs. σ is in contact-offset units (1 = padded radius). */
     public static final class Profile {
-        /** Calibrated so the default return rate ≈ today's 0.73 (see BotPlannerTest). */
+        /**
+         * Calibrated so the default GEOMETRIC return rate ≈ today's 0.73
+         * (see BotPlannerTest). The playable rate sits slightly under that:
+         * successful near-edge contacts launch heavy-spin returns that can
+         * themselves land out, so physics adds a small extra miss share.
+         */
         public float aimSigma = 0.60f;
         /** Minimum seconds between the player's hit and the bot's swing. */
         public float reactionDelay = 0.55f;
@@ -30,8 +35,13 @@ public final class BotPlanner {
         public float ndx, ndy;
     }
 
-    /** How long the bot is willing to look into the future. */
-    private static final float HORIZON_S = 6f;
+    /**
+     * How long the bot is willing to look into the future. Must stay below the
+     * world's BOT_RESOLVE safety timeout (GameConfig.NET_CLIENT_MISS_TIMEOUT,
+     * 4.5 s) — an armed plan suppresses that timer, so a longer horizon could
+     * stall the rally past the timeout's intended bound.
+     */
+    private static final float HORIZON_S = 4f;
 
     private final PhysicsConfig cfg;
     private final BallPhysics scratchPhysics;
@@ -69,7 +79,11 @@ public final class BotPlanner {
             }
             if (bounced) {
                 boolean apex = prevVy > 0f && scratch.vel.y <= 0f;
-                boolean dropping = scratch.pos.y < PhysicsConfig.TABLE_TOP_Y + 0.3f;
+                // "dropping" must mean fell back down after the post-bounce rise —
+                // without the vel.y < 0 requirement it fires one substep after the
+                // bounce (y is still near table level) and the bot swings instantly.
+                boolean dropping = scratch.vel.y < 0f
+                    && scratch.pos.y < PhysicsConfig.TABLE_TOP_Y + 0.3f;
                 if (apex || dropping || contacts.tableBounce) {
                     strikeAt = t;
                     break;

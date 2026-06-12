@@ -275,6 +275,10 @@ public final class MatchWorld3D {
         float prevZ = ball.pos.z;
         stepBall(delta);
 
+        // The bot's strikeTime is measured from the player's hit, so its clock
+        // must tick through the whole flight, not just BOT_RESOLVE.
+        if (botPlanArmed) botPlanClock += delta;
+
         if (!crossedNet && prevZ > 0f && ball.pos.z <= 0f) crossedNet = true;
 
         if (contacts.tableBounce) {
@@ -338,13 +342,25 @@ public final class MatchWorld3D {
         }
         if (botPlanClock < botPlan.strikeTime) return;
         botPlanArmed = false;
+        // strikeTime < 0 means the plan predicted no legal landing. The armed flag
+        // is set unconditionally at the player's hit, so THIS guard (not the flag)
+        // is what turns a "won't land" prediction into a miss — keep both checks.
         if (botPlan.whiff || botPlan.strikeTime < 0f) {
             botMissedShot();
             return;
         }
-        rallySpeedup = Math.min(1f, rallySpeedup
-            + config.getApproachDurationDecay() / Math.max(0.001f,
-              config.getInitialApproachDuration() - config.getMinimumApproachDuration()));
+        // Real-ball sanity at the swing moment: if prediction and reality ever
+        // diverge (item-stacked pace, edge cases), never "save" a dead ball from
+        // below the table or outside the play volume.
+        if (ball.pos.y < TABLE_TOP_Y
+            || ball.pos.z < -TABLE_HALF_LENGTH - 2f
+            || Math.abs(ball.pos.x) > TABLE_HALF_WIDTH + 4f) {
+            botMissedShot();
+            return;
+        }
+        float rampStep = config.getApproachDurationDecay() / Math.max(0.001f,
+            config.getInitialApproachDuration() - config.getMinimumApproachDuration());
+        rallySpeedup = Math.min(1f, rallySpeedup + rampStep);
         PaddleContact.applyReturn(ball, config.getPhysics(), botPlan.ndx, botPlan.ndy,
             bot.getReturnPowerMultiplier(),
             rallyPaceMultiplier() * p1Effects.incomingSpeedMultiplier()
