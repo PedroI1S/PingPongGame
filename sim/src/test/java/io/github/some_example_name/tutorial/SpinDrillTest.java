@@ -27,9 +27,12 @@ class SpinDrillTest {
                 case TOPSPIN -> ndy = 0.75f;
                 case BACKSPIN -> ndy = -0.8f;
                 case CURVE -> {
+                    // click the inner edge (toward center); the low click (−ndy)
+                    // adds float for hang time while the sidespin bends the path
+                    // around the pole into the centre-back zone
                     float side = c.ball().pos.x >= 0f ? 1f : -1f;
-                    ndx = side * 0.85f;
-                    ndy = 0.1f;
+                    ndx = -side * 0.85f;
+                    ndy = -0.5f;
                 }
                 default -> { }
             }
@@ -37,6 +40,11 @@ class SpinDrillTest {
             resolve(c);
         }
         assertEquals(target, c.drill(), "could not script my way to " + target);
+        // Drain any stale events that may have fired inside stepUntilHittable
+        // (e.g. a CURVE ball that lands while stepUntilHittable is still running
+        // leaves successEvent=true that no caller has consumed yet).
+        c.consumeSuccessEvent();
+        c.consumeFailEvent();
         return c;
     }
 

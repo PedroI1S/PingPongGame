@@ -140,14 +140,21 @@ public final class DrillCourse {
                 }
             }
             case CURVE -> {
-                boolean demo = !demoDoneForDrill;
-                feedFromFarSide(feedSide * 1.5f, demo);
-                if (demo) {
+                if (!demoDoneForDrill) {
+                    // Demonstrate the EXACT shot to copy: a slow-mo ideal
+                    // inner-edge return from the player's contact spot, bending
+                    // around the pole into the zone. (An incoming pre-spun demo
+                    // would curve with MIRRORED handedness on screen — Magnus
+                    // flips with travel direction — teaching the wrong picture.)
+                    ball.pos.set(feedSide * 1.5f, PhysicsConfig.TABLE_TOP_Y + 0.8f, 4.5f);
+                    PaddleContact.applyReturn(ball, cfg, -feedSide * 0.85f, -0.5f,
+                                              1f, 1f, true,
+                                              cfg.basePaceSI, cfg.baseArcSI);
                     cfg.timeScale = baseTimeScale * TutorialGeometry.DEMO_SLOWMO;
-                    ball.spin.set(0f, feedSide * 22f, 0f);
                     mode = BallMode.DEMO;
                     demoDoneForDrill = true;
                 } else {
+                    feedFromFarSide(feedSide * 1.5f, false);
                     mode = BallMode.INCOMING;
                 }
             }
@@ -207,12 +214,26 @@ public final class DrillCourse {
         return true;
     }
 
-    /** The serve counterpart (offsets are RAW; serveControl is applied here). */
+    /**
+     * The serve counterpart (offsets are RAW; serveControl is applied here).
+     *
+     * <p>This method hand-rolls the serve rather than delegating to
+     * {@code PaddleContact.serveFromRay} for two reasons:
+     * <ol>
+     *   <li>It is the beatability test seam — tests inject offsets (ndx/ndy)
+     *       directly; {@code serveFromRay} computes those offsets from a Ray,
+     *       which requires rendering-side geometry.</li>
+     *   <li>The {@code serveControl} pre-multiplication here MUST stay in
+     *       lockstep with {@code serveFromRay}'s identical scaling so that
+     *       the match and the drill course produce the same ball physics.</li>
+     * </ol>
+     * The feed already called {@code resetAccumulator()} when placing the frozen
+     * ball (WAIT_SERVE), so there is no need to reset it again here.
+     */
     public boolean attemptServe(float ndx, float ndy) {
         if (mode != BallMode.WAIT_SERVE) return false;
         ball.vel.setZero();
         ball.spin.setZero();
-        physics.resetAccumulator();
         PaddleContact.applyReturn(ball, cfg,
             ndx * cfg.serveControl, ndy * cfg.serveControl, 1f, 1f, true,
             cfg.servePaceSI, cfg.serveArcSI);
@@ -254,8 +275,43 @@ public final class DrillCourse {
                 else if (z > TutorialGeometry.BACKSPIN_DEEP.z1) fail("Too short — let the float carry it deep.");
                 else fail("Too deep — nearly off the end. A touch softer.");
             }
-            case CURVE    -> throw new UnsupportedOperationException("Task 4");
-            case SERVE    -> throw new UnsupportedOperationException("Task 4");
+            case CURVE -> {
+                boolean spun = Math.abs(contactSpinY) > TutorialGeometry.SPIN_MIN;
+                boolean inZone = TutorialGeometry.CURVE_ZONE.contains(x, z);
+                if (spun && inZone) succeed("Bent it — beautiful.");
+                else if (!spun) fail("No curve — click the side edge of the ball.");
+                else fail("Around, but off the zone — start the aim wider.");
+            }
+            case SERVE -> {
+                ZoneRect zone = activeZone();
+                if (zone.contains(x, z)) {
+                    aimZoneIndex = 1 - aimZoneIndex;
+                    succeed(aimZoneIndex == 1 ? "Short and tight. Now go deep." : "Served.");
+                } else if (z >= zone.z0 && z <= zone.z1) {
+                    // depth is right — the miss is purely lateral; coaching click
+                    // height here would mislead (the depth messages below assume
+                    // a depth miss)
+                    fail(x < zone.x0 ? "Right depth — aim it further RIGHT."
+                                     : "Right depth — aim it further LEFT.");
+                } else {
+                    // Name the side that was ACTUALLY missed — never guess the
+                    // direction. Both zones have meaningful z0 (near edge) and z1
+                    // (far edge); a bounce past z0 is "too deep", past z1 "too short".
+                    // For SERVE_SHORT_L: z0=−3.2, z1=−0.8 (closer to player).
+                    // For SERVE_DEEP_R:  z0=−6.4, z1=−4.0 (closer to far end).
+                    // "Too deep" (z < z0) on SHORT means the serve went long.
+                    // "Too deep" (z < z0) on DEEP means it sailed past the far
+                    //   edge — still too long relative to the zone's far side.
+                    // Serves that go OOB (below table or past z=−11) never reach
+                    // here; they're caught by the "Out" branch in stepBall.
+                    if (z < zone.z0) fail(zone == TutorialGeometry.SERVE_SHORT_L
+                        ? "Long — click HIGHER on the ball for a short serve."
+                        : "Too deep — click HIGHER to bring it back in the zone.");
+                    else fail(zone == TutorialGeometry.SERVE_SHORT_L
+                        ? "Too short — click LOWER to push it deeper."
+                        : "Short — click LOWER to float it deep.");
+                }
+            }
         }
     }
 
@@ -275,9 +331,11 @@ public final class DrillCourse {
 
     private void endAttempt(float delay) {
         cfg.timeScale = baseTimeScale;
+        // demos don't flip the side: the first real ball must arrive on the
+        // same side the demonstration just showed
+        if (drill == DrillId.CURVE && mode != BallMode.DEMO) feedSide = -feedSide;
         mode = BallMode.WAIT_FEED;
         feedTimer = delay;
-        if (drill == DrillId.CURVE) feedSide = -feedSide;
     }
 
     private void advance() {
