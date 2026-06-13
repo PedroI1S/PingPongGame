@@ -809,6 +809,8 @@ public final class MatchWorld3D {
     public Vector3 getBallVel()                 { return ball.vel; }
     public Vector3 getBallSpin()                { return ball.spin; }
     public float   getBallRadius()              { return BALL_RADIUS; }
+    /** The bot's live difficulty knobs (mutable — the tutorial softens them). */
+    public BotPlanner.Profile getBotProfile()  { return botProfile; }
     public boolean isBallVisible()              { return ballVisible; }
     public int     getPlayerLives()             { return player.getLives(); }
     public int     getBotLives()                { return bot.getLives(); }
