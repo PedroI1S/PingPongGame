@@ -14,6 +14,7 @@ import io.github.some_example_name.screen.MenuScreen;
 import io.github.some_example_name.screen.PauseMenuScreen;
 import io.github.some_example_name.screen.MultiplayerLobbyScreen;
 import io.github.some_example_name.screen.NetMatchScreen;
+import io.github.some_example_name.screen.TutorialScreen;
 
 /**
  * Game bootstrap.
@@ -97,6 +98,10 @@ public class Main extends Game {
 
     public void openMenu() {
         setScreen(new MenuScreen(this));
+    }
+
+    public void openTutorial() {
+        setScreen(new TutorialScreen(this));
     }
 
     public void openConfig() {
