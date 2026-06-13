@@ -237,8 +237,23 @@ public final class DrillCourse {
                     succeed("On target.");
                 } else fail("Off target — aim with the click side.");
             }
-            case TOPSPIN  -> throw new UnsupportedOperationException("Task 3");
-            case BACKSPIN -> throw new UnsupportedOperationException("Task 3");
+            case TOPSPIN -> {
+                boolean spun = contactSpinX < -TutorialGeometry.SPIN_MIN; // −z travel topspin
+                boolean inBand = TutorialGeometry.TOPSPIN_NEAR.contains(x, z);
+                if (spun && inBand) succeed("That dive — that's topspin.");
+                else if (!spun) fail("No topspin — click the TOP half of the ball.");
+                // name the side that was actually missed — never guess the direction
+                else if (z > TutorialGeometry.TOPSPIN_NEAR.z1) fail("Too short — ease up, land it past the line.");
+                else fail("Too deep — the dive should drop it in short.");
+            }
+            case BACKSPIN -> {
+                boolean spun = contactSpinX > TutorialGeometry.SPIN_MIN;
+                boolean inBand = TutorialGeometry.BACKSPIN_DEEP.contains(x, z);
+                if (spun && inBand) succeed("Floated deep — that's backspin.");
+                else if (!spun) fail("No backspin — click the BOTTOM half.");
+                else if (z > TutorialGeometry.BACKSPIN_DEEP.z1) fail("Too short — let the float carry it deep.");
+                else fail("Too deep — nearly off the end. A touch softer.");
+            }
             case CURVE    -> throw new UnsupportedOperationException("Task 4");
             case SERVE    -> throw new UnsupportedOperationException("Task 4");
         }

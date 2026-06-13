@@ -21,6 +21,8 @@ public final class TutorialGeometry {
     public static final float POLE_RADIUS = 0.45f;
     public static final float POLE_HEIGHT = 1.4f; // above the table top
 
+    /** Raw WORLD spin units, compared against ball.spin directly — do NOT wrap
+     *  in spinW(); trips at a click ~19% off center, well below the ideal. */
     public static final float SPIN_MIN      = 10f;
     public static final float CONTACT_MIN_Z = 3.5f;
     public static final float REFEED_DELAY  = 0.8f;
