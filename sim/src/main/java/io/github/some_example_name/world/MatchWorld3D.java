@@ -80,6 +80,7 @@ public final class MatchWorld3D {
     private boolean ballVisible;
     private boolean crossedNet;
     private int bouncesOnPlayerSide;
+    private int bouncesOnClientSide;
 
     /**
      * Who serves the next point.  1 = P1 (player), 2 = P2 (bot in single-player,
@@ -223,6 +224,7 @@ public final class MatchWorld3D {
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
+        bouncesOnClientSide = 0;
         phase = Phase.INCOMING;
         statusText = "Click the ball as it comes through the table lane.";
     }
@@ -293,6 +295,7 @@ public final class MatchWorld3D {
         if (contacts.tableBounce) {
             boolean valid = crossedNet && contacts.bounceZ < 0f;
             if (valid) {
+                bouncesOnClientSide = 1;
                 phase = Phase.BOT_RESOLVE;
                 phaseTimer = GameConfig.NET_CLIENT_MISS_TIMEOUT;
                 statusText = matchMode == MatchMode.PVP
@@ -325,6 +328,12 @@ public final class MatchWorld3D {
 
     private void updateBotResolve(float delta) {
         stepBall(delta);
+
+        if (matchMode == MatchMode.PVP && contacts.tableBounce
+            && contacts.bounceZ < 0f && crossedNet) {
+            bouncesOnClientSide++;
+            if (bouncesOnClientSide >= 2) { clientMiss(PacketType.LOG_DOUBLE_BOUNCE); return; }
+        }
 
         // PVP: score immediately if the ball leaves the playable area.
         if (matchMode == MatchMode.PVP) {
@@ -377,6 +386,7 @@ public final class MatchWorld3D {
             false, config.getPhysics().basePaceSI, config.getPhysics().baseArcSI);
         crossedNet = false;
         bouncesOnPlayerSide = 0;
+        bouncesOnClientSide = 0;
         phase = Phase.INCOMING;
         statusText = "Bot gets it back. Click the ball as it comes through.";
         paddleHitEvent = true;
@@ -462,11 +472,10 @@ public final class MatchWorld3D {
     }
 
     /**
-     * Whether the client is allowed to hit right now: ball has crossed the
-     * net to their side (OUTGOING) or bounced there and is waiting (BOT_RESOLVE).
+     * Whether the client is allowed to hit right now: ball has bounced on their
+     * side exactly once (BOT_RESOLVE). Volleys are illegal and scored separately.
      */
     public boolean isClientCanHit() {
-        if (phase == Phase.OUTGOING && crossedNet && ball.pos.z < 0f) return true;
         return phase == Phase.BOT_RESOLVE;
     }
 
@@ -541,6 +550,7 @@ public final class MatchWorld3D {
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
+        bouncesOnClientSide = 0;
         phase = Phase.OUTGOING;
         statusText = "P1 serves. P2 must return.";
         paddleHitEvent = true;
@@ -576,14 +586,21 @@ public final class MatchWorld3D {
         if (phase == Phase.PREPARE_SERVE && nextServer == 2) {
             return tryClientServe(pickRay);
         }
+        float scale = bot.getTargetScaleMultiplier() * p2Effects.hitScaleMultiplier();
+        // Volley: P2 struck the ball before it bounced on their side.
+        if (phase == Phase.OUTGOING && crossedNet && ball.pos.z < 0f
+            && Intersector.intersectRaySphere(pickRay, ball.pos, PaddleContact.hitRadius(scale), hitPoint)) {
+            clientMiss(PacketType.LOG_VOLLEY);
+            return true;
+        }
         if (!isClientCanHit()) return false;
         if (!PaddleContact.returnFromRay(pickRay, ball, config.getPhysics(),
-                bot.getTargetScaleMultiplier() * p2Effects.hitScaleMultiplier(),
-                bot.getReturnPowerMultiplier(), p1Effects.incomingSpeedMultiplier(), false)) {
+                scale, bot.getReturnPowerMultiplier(), p1Effects.incomingSpeedMultiplier(), false)) {
             return false;
         }
         crossedNet = false;
         bouncesOnPlayerSide = 0;
+        bouncesOnClientSide = 0;
         phase = Phase.INCOMING;
         statusText = "P2 returns! Ball heading to P1.";
         paddleHitEvent = true;
@@ -607,6 +624,7 @@ public final class MatchWorld3D {
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
+        bouncesOnClientSide = 0;
         phase = Phase.INCOMING;
         statusText = "P2 serves. P1 must return.";
         paddleHitEvent = true;
