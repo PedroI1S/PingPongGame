@@ -131,10 +131,16 @@ public final class TutorialScreen extends BaseScreen {
         batch.setProjectionMatrix(context.getViewport().getCamera().combined);
         batch.begin();
         arena.drawCursorMarker(batch, context.getAssets().getProceduralAssets().getAimRing());
-        drawHud(batch);
         batch.end();
 
         context.getPostProcess().endAndBlit();
+
+        // Crisp UI pass.
+        context.getViewport().apply(true);
+        batch.setProjectionMatrix(context.getViewport().getCamera().combined);
+        batch.begin();
+        drawHud(batch);
+        batch.end();
     }
 
     private void update(float delta) {

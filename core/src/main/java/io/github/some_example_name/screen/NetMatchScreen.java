@@ -193,11 +193,9 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
         // Render item cubes in 3D (uses a fresh modelBatch begin/end)
         if (inItemPhase && itemPhaseRenderer != null) {
-            // Update hover state from current mouse position each frame.
-            // getPickRay() handles Y-inversion internally, pass raw screen coords.
             com.badlogic.gdx.math.collision.Ray hoverRay =
                 arena.getCamera().getPickRay(netInput.lastMouseX, netInput.lastMouseY);
-            if (itemPhaseRenderer.updateHover(hoverRay, 1)) { // p1Entries = myItems always
+            if (itemPhaseRenderer.updateHover(hoverRay, 1)) {
                 context.getAssets().getUiHoverSfx().play(getSfxGain() * 0.4f);
             }
             itemPhaseRenderer.update(delta);
@@ -208,7 +206,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
         context.getViewport().apply(true);
 
-        // Punch blur
+        // Punch blur must be set before endAndBlit() reads the uniform.
         if (punchTimer > 0f) {
             punchTimer -= delta;
             context.getPostProcess().setPunchBlur(punchTimer / 10f);
@@ -218,29 +216,32 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
         SpriteBatch batch = context.getBatch();
         batch.setProjectionMatrix(context.getViewport().getCamera().combined);
+        // World-space 2D that SHOULD stay stylized — drawn inside the FBO.
         batch.begin();
         arena.drawCursorMarker(batch, context.getAssets().getProceduralAssets().getAimRing());
         arena.drawParticles(batch, context.getAssets().getProceduralAssets().getGlow(), particles);
+        batch.end();
+
+        context.getPostProcess().endAndBlit();
+
+        // ── Crisp UI pass — untouched by the shader or punch blur ──
+        context.getViewport().apply(true);
+        batch.setProjectionMatrix(context.getViewport().getCamera().combined);
+        batch.begin();
         drawHud(batch);
         if (matchOver)    drawOutcomeOverlay(batch);
         if (disconnected) drawDisconnectOverlay(batch);
-        // Item phase READY button
         if (inItemPhase) {
             String readyLabel = itemReadySent ? "WAITING..." : "[ READY ]";
-            context.getBodyFont().setColor(Palette.TEXT);
             drawCentered(batch, context.getBodyFont(), readyLabel,
                 GameConfig.WORLD_WIDTH * 0.5f, 60f, Palette.TEXT);
         }
-        // Round overlay
         if (roundOverlayTimer > 0f) {
             roundOverlayTimer -= delta;
-            context.getTitleFont().setColor(Palette.TEXT);
             drawCentered(batch, context.getTitleFont(), roundOverlayText,
                 GameConfig.WORLD_WIDTH * 0.5f, GameConfig.WORLD_HEIGHT * 0.5f, Palette.TEXT);
         }
         batch.end();
-
-        context.getPostProcess().endAndBlit();
     }
 
     private void updateSimulation(float delta) {
