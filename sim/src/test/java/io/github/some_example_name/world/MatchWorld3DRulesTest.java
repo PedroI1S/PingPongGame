@@ -156,4 +156,26 @@ class MatchWorld3DRulesTest {
         }
         assertTrue(sawDouble, "P2 double bounce must enqueue LOG_DOUBLE_BOUNCE for subject 2");
     }
+
+    @Test void coinFlipLossEnqueuesLogEventForTheLoser() {
+        // Loop seeds so we hit at least one flip that lands on each side.
+        boolean sawSelfLoss = false, sawOppLoss = false;
+        for (long seed = 0; seed < 30 && !(sawSelfLoss && sawOppLoss); seed++) {
+            MatchWorld3D w = new MatchWorld3D(MatchConfig.createDefault(), new RandomXS128(seed));
+            w.setMatchMode(MatchMode.BOT);
+            w.enterItemPhase();
+            while (w.hasLogEvent()) w.pollLogEvent(); // drain dealing noise, if any
+            w.getP1Inventory().clear();
+            w.getP1Inventory().add(io.github.some_example_name.model.ItemType.COIN_FLIP);
+            assertTrue(w.applyItem(1, io.github.some_example_name.model.ItemType.COIN_FLIP));
+            int code = -1, subject = -1;
+            while (w.hasLogEvent()) {
+                int packed = w.pollLogEvent();
+                if (((packed >> 8) & 0xFF) == PacketType.LOG_COIN_FLIP_LOSS) { code = PacketType.LOG_COIN_FLIP_LOSS; subject = packed & 0xFF; }
+            }
+            assertEquals(PacketType.LOG_COIN_FLIP_LOSS, code, "coin flip must enqueue a loss event, seed " + seed);
+            if (subject == 1) sawSelfLoss = true; else if (subject == 2) sawOppLoss = true;
+        }
+        assertTrue(sawSelfLoss && sawOppLoss, "both flip outcomes must be reachable and logged");
+    }
 }

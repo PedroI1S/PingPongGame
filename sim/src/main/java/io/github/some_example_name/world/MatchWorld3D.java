@@ -658,6 +658,7 @@ public final class MatchWorld3D {
     }
 
     private void handlePlayerFlyHit() {
+        logEvent(PacketType.LOG_FLY_HIT, 1);
         player.loseLife();
         if (player.getLives() <= 0) {
             outcome = MatchOutcome.BOT_WIN; ballVisible = false; return;
@@ -667,6 +668,7 @@ public final class MatchWorld3D {
     }
 
     private void handleBotFlyHit() {
+        logEvent(PacketType.LOG_FLY_HIT, 2);
         bot.loseLife();
         if (bot.getLives() <= 0) {
             outcome = MatchOutcome.PLAYER_WIN; ballVisible = false; return;
@@ -780,8 +782,13 @@ public final class MatchWorld3D {
             // ITEM_USED broadcast arrives — no server-side state needed.
             case PUNCH       -> { }
             case FLY_BAIT    -> spawnFlies(oppFx, playerNumber == 1 ? 2 : 1);
-            case COIN_FLIP   -> { if (random.nextFloat() < 0.5f) self.loseLife();
-                                  else opp.loseLife(); checkMatchOver(); }
+            case COIN_FLIP   -> {
+                int loser;
+                if (random.nextFloat() < 0.5f) { self.loseLife(); loser = playerNumber; }
+                else { opp.loseLife(); loser = (playerNumber == 1) ? 2 : 1; }
+                logEvent(PacketType.LOG_COIN_FLIP_LOSS, loser);
+                checkMatchOver();
+            }
         }
 
         itemUsedEvent  = true;
