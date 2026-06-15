@@ -86,6 +86,22 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     private String roundOverlayText;
     private float  roundOverlayTimer;
 
+    // ── Event log (upper-left, fading) ──────────────────────────────────────────
+    private static final float LOG_LIFETIME = 6f;
+    private static final float LOG_FADE_SECS = 1f; // alpha ramps to 0 over the final second
+    private static final int   LOG_MAX      = 6;
+    private final java.util.ArrayDeque<LogLine> logLines = new java.util.ArrayDeque<>();
+
+    private static final class LogLine {
+        final String text; float age;
+        LogLine(String t) { this.text = t; }
+    }
+
+    private void pushLog(String text) {
+        logLines.addFirst(new LogLine(text));
+        while (logLines.size() > LOG_MAX) logLines.removeLast();
+    }
+
     private MatchArenaRenderer arena;
 
     private final Array<ImpactParticle3D> particles = new Array<>();
@@ -230,6 +246,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         batch.setProjectionMatrix(context.getViewport().getCamera().combined);
         batch.begin();
         drawHud(batch);
+        drawEventLog(batch, delta);
         if (matchOver)    drawOutcomeOverlay(batch);
         if (disconnected) drawDisconnectOverlay(batch);
         if (inItemPhase) {
@@ -459,6 +476,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             myFlies.clear();
             oppFlies.clear();
             punchTimer = 0f;
+            pushLog(playerNumber == winner ? "You win the round" : "Opponent wins the round");
         });
     }
 
@@ -502,6 +520,14 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
                 } else {
                     punchTimer = 10f;
                 }
+            }
+            String who = (byPlayer == playerNumber) ? "You" : "Opponent";
+            if (t == ItemType.FLY_BAIT) {
+                pushLog(byPlayer == playerNumber
+                    ? "You set Fly Bait — flies on opponent's side"
+                    : "Opponent set Fly Bait — flies on your side!");
+            } else {
+                pushLog(who + " used " + ItemCopy.name(t));
             }
         });
     }
@@ -552,6 +578,14 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         shutdownConn();
     }
 
+    @Override
+    public void onLogEvent(int code, int subject) {
+        Gdx.app.postRunnable(() -> {
+            String line = describeLog(code, subject);
+            if (line != null) pushLog(line);
+        });
+    }
+
     private void spawnBounceSparks(float x, float y, float z) {
         if (particles.size >= MAX_PARTICLES) {
             return;
@@ -595,6 +629,36 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
                 "Click to serve / return.  ESC = menu.",
                 GameConfig.WORLD_WIDTH * 0.5f, 102f, Palette.TEXT_DIM);
         }
+    }
+
+    private String describeLog(int code, int subject) {
+        String who = (subject == playerNumber) ? "You" : "Opponent";
+        return switch (code) {
+            case PacketType.LOG_VOLLEY         -> who + ": volley — point lost";
+            case PacketType.LOG_DOUBLE_BOUNCE  -> who + ": double bounce — point lost";
+            case PacketType.LOG_OUT_OF_BOUNDS  -> who + ": shot out of bounds — point lost";
+            case PacketType.LOG_MISS           -> who + ": missed the return";
+            case PacketType.LOG_TIMEOUT        -> who + ": too slow — point lost";
+            case PacketType.LOG_FLY_HIT        -> who + ": hit a fly — point lost";
+            case PacketType.LOG_COIN_FLIP_LOSS -> "Coin flip — " + (subject == playerNumber ? "you lose" : "opponent loses");
+            default -> null;
+        };
+    }
+
+    private void drawEventLog(SpriteBatch batch, float delta) {
+        if (!context.getSettings().isEventLogEnabled()) return;
+        java.util.Iterator<LogLine> it = logLines.iterator();
+        int i = 0;
+        while (it.hasNext()) {
+            LogLine line = it.next();
+            line.age += delta;
+            if (line.age >= LOG_LIFETIME) { it.remove(); continue; }
+            float alpha = Math.min(1f, (LOG_LIFETIME - line.age) / LOG_FADE_SECS);
+            context.getBodyFont().setColor(Palette.TEXT_DIM.r, Palette.TEXT_DIM.g, Palette.TEXT_DIM.b, alpha);
+            context.getBodyFont().draw(batch, line.text, GameConfig.HUD_PADDING, 610f - i * 24f);
+            i++;
+        }
+        context.getBodyFont().setColor(Palette.TEXT);
     }
 
     private String deriveStatus() {

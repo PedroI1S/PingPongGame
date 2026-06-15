@@ -36,6 +36,7 @@ public final class GameSettings {
     private static final String KEY_SFX_VOL        = "sfxVol";
     private static final String KEY_FPS_COUNTER    = "fpsCounter";
     private static final String KEY_SCREEN_SHAKE   = "screenShake";
+    private static final String KEY_EVENT_LOG      = "eventLog";
     private static final String KEY_TUTORIAL_DONE  = "tutorialDone";
 
     /**
@@ -56,6 +57,7 @@ public final class GameSettings {
     // ── Game preferences ──────────────────────────────────────────────────────
     private boolean showFpsCounter = false;
     private boolean screenShake    = true;
+    private boolean eventLog       = true;
     private boolean tutorialCompleted;
 
     public void load() {
@@ -76,6 +78,7 @@ public final class GameSettings {
         sfxVolume      = clampVol(prefs.getInteger(KEY_SFX_VOL,    sfxVolume));
         showFpsCounter    = prefs.getBoolean(KEY_FPS_COUNTER, showFpsCounter);
         screenShake       = prefs.getBoolean(KEY_SCREEN_SHAKE, screenShake);
+        eventLog          = prefs.getBoolean(KEY_EVENT_LOG, eventLog);
         tutorialCompleted = prefs.getBoolean(KEY_TUTORIAL_DONE, tutorialCompleted);
     }
 
@@ -91,6 +94,7 @@ public final class GameSettings {
         prefs.putInteger(KEY_SFX_VOL,    sfxVolume);
         prefs.putBoolean(KEY_FPS_COUNTER, showFpsCounter);
         prefs.putBoolean(KEY_SCREEN_SHAKE, screenShake);
+        prefs.putBoolean(KEY_EVENT_LOG, eventLog);
         prefs.putBoolean(KEY_TUTORIAL_DONE, tutorialCompleted);
         prefs.flush();
     }
@@ -116,6 +120,8 @@ public final class GameSettings {
     public void    setShowFpsCounter(boolean v) { showFpsCounter = v; save(); }
     public boolean isScreenShakeEnabled() { return screenShake; }
     public void    setScreenShakeEnabled(boolean v) { screenShake = v; save(); }
+    public boolean isEventLogEnabled()    { return eventLog; }
+    public void    setEventLogEnabled(boolean v) { eventLog = v; save(); }
     public boolean isTutorialCompleted()  { return tutorialCompleted; }
     public void    setTutorialCompleted(boolean v) { tutorialCompleted = v; save(); }
 
