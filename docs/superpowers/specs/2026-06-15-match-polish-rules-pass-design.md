@@ -136,7 +136,7 @@ description derived from what `applyItem` actually does:
 
 | Item | Name | Description |
 |---|---|---|
-| PATCH_KIT | Patch Kit | Restores your lives to full. |
+| PATCH_KIT | Patch Kit | Restores one of your lives. |
 | WIDE_PADDLE | Wide Paddle | Your hit area is larger this rally. |
 | SLOW_MO | Slow-Mo | The ball comes at you slower this rally. |
 | STEAL | Steal | Take a random item from your opponent. |
