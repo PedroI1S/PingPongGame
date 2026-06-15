@@ -199,6 +199,11 @@ public final class GameServer {
             int killed = w.consumeFlyKilledIndex();
             if (killed >= 0) broadcastFlyKilled(w.getFlyKilledOwner(), killed);
 
+            while (w.hasLogEvent()) {
+                int packed = w.pollLogEvent();
+                sendLogEventToAll((packed >> 8) & 0xFF, packed & 0xFF);
+            }
+
             if (w.consumePaddleHitEvent())  sendSfxToAll(PacketType.SFX_PADDLE);
             if (w.consumeTableBounceEvent()) sendSfxToAll(PacketType.SFX_TABLE);
             if (w.consumeNetHitEvent())      sendSfxToAll(PacketType.SFX_TABLE);
@@ -259,6 +264,12 @@ public final class GameServer {
         GameConnection c1 = p1, c2 = p2;
         if (c1 != null) c1.sendSfx(sfxType);
         if (c2 != null) c2.sendSfx(sfxType);
+    }
+
+    private void sendLogEventToAll(int code, int subject) {
+        GameConnection c1 = p1, c2 = p2;
+        if (c1 != null) c1.sendLogEvent(code, subject);
+        if (c2 != null) c2.sendLogEvent(code, subject);
     }
 
     private void sendGameOverToAll(int winner) {
