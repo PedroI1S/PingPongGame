@@ -21,6 +21,7 @@ import io.github.some_example_name.network.PacketType;
 import io.github.some_example_name.render.ItemCopy;
 import io.github.some_example_name.render.ItemPhaseRenderer;
 import io.github.some_example_name.render.MatchArenaRenderer;
+import io.github.some_example_name.ui.Button;
 import io.github.some_example_name.world.FlyState;
 import io.github.some_example_name.world.ImpactParticle3D;
 import io.github.some_example_name.world.physics.BallPhysics;
@@ -69,6 +70,8 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     private final List<ItemType> myItems  = new ArrayList<>();
     private final List<ItemType> oppItems = new ArrayList<>();
     private boolean itemReadySent;
+    private Button readyButton;
+    private final Vector3 tmpUiWorld = new Vector3();
     /**
      * True when an opponent PUNCH was applied while in item selection.
      * The blur is deferred so it only starts when the rally resumes.
@@ -159,6 +162,11 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             // P1 views from +z, P2 from −z — keep "my items" on the local side.
             itemPhaseRenderer = new ItemPhaseRenderer(playerNumber == 1);
         }
+        if (readyButton == null) {
+            float w = 240f, h = 56f;
+            readyButton = new Button(GameConfig.WORLD_WIDTH * 0.5f - w * 0.5f, 40f, w, h,
+                "END SELECTION", Palette.RED, this::confirmReady);
+        }
         backgroundMusic = context.getAssets().getBackgroundMusic();
         backgroundMusic.setLooping(true);
         // Respect Master × Music settings on (re)entry.  The base 0.25 keeps
@@ -221,6 +229,18 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             arena.getModelBatch().end();
         }
 
+        // END SELECTION button — independent of the item shelf so it always tracks.
+        if (inItemPhase && readyButton != null) {
+            toUiWorld(netInput.lastMouseX, netInput.lastMouseY);
+            readyButton.enabled = !itemReadySent;
+            readyButton.label = itemReadySent ? "WAITING..." : "END SELECTION";
+            boolean wasHovered = readyButton.hovered;
+            readyButton.updateHover(tmpUiWorld.x, tmpUiWorld.y);
+            if (!wasHovered && readyButton.hovered) {
+                context.getAssets().getUiHoverSfx().play(getSfxGain() * 0.4f);
+            }
+        }
+
         context.getViewport().apply(true);
 
         // Punch blur must be set before endAndBlit() reads the uniform.
@@ -250,9 +270,10 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         if (matchOver)    drawOutcomeOverlay(batch);
         if (disconnected) drawDisconnectOverlay(batch);
         if (inItemPhase) {
-            String readyLabel = itemReadySent ? "WAITING..." : "[ READY ]";
-            drawCentered(batch, context.getBodyFont(), readyLabel,
-                GameConfig.WORLD_WIDTH * 0.5f, 60f, Palette.TEXT);
+            if (readyButton != null) {
+                readyButton.draw(batch, context.getAssets().getProceduralAssets().getPixel(),
+                    context.getBodyFont(), context.getGlyphLayout());
+            }
             ItemType hov = itemPhaseRenderer != null ? itemPhaseRenderer.hoveredType(1) : null;
             if (hov != null) {
                 drawCentered(batch, context.getBodyFont(), ItemCopy.name(hov),
@@ -341,31 +362,39 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         shakeAmplitude = amplitude;
     }
 
+    private void confirmReady() {
+        if (itemReadySent) return;
+        itemReadySent = true; // stay in the item phase; the button now shows WAITING
+        context.getAssets().getUiClickSfx().play(getSfxGain() * 0.6f);
+        if (conn != null) conn.sendItemReady();
+    }
+
+    /** Unprojects a raw screen point to viewport world (1280×720) coordinates into {@link #tmpUiWorld}. */
+    private void toUiWorld(int screenX, int screenY) {
+        tmpUiWorld.set(screenX, screenY, 0f);
+        context.getViewport().unproject(tmpUiWorld);
+    }
+
     private void handleClick() {
         // During item phase: intercept all clicks
         if (inItemPhase) {
+            if (itemReadySent) return; // locked in — waiting for the opponent, ignore clicks
+            // END SELECTION button first (2D UI, world coords).
+            toUiWorld(netInput.lastClickX, netInput.lastClickY);
+            if (readyButton != null && readyButton.tryClick(tmpUiWorld.x, tmpUiWorld.y)) {
+                return; // confirmReady() ran via the button action
+            }
+            // Then the 3D item shelf.
             if (itemPhaseRenderer != null && arena != null) {
-                // Ray-test against item cubes first.
-                // getPickRay() already inverts Y internally via Camera.unproject(),
-                // so we pass raw screen coords (0,0 = top-left from touchDown).
                 com.badlogic.gdx.math.collision.Ray ray = arena.getCamera()
                     .getPickRay(netInput.lastClickX, netInput.lastClickY);
-                // p1Entries always holds myItems regardless of absolute player number.
                 ItemType picked = itemPhaseRenderer.pickItem(ray, 1);
                 if (picked != null) {
                     context.getAssets().getUiClickSfx().play(getSfxGain() * 0.6f);
                     if (conn != null) conn.sendUseItem(picked.getId());
-                    return; // consumed by item use
                 }
             }
-            // Click hit nothing — treat as READY
-            if (!itemReadySent) {
-                itemReadySent = true;
-                inItemPhase = false;
-                context.getAssets().getUiClickSfx().play(getSfxGain() * 0.6f);
-                if (conn != null) conn.sendItemReady();
-            }
-            return; // consume — no CLICK sent to server during ITEM_PHASE
+            return; // never sent to the server during ITEM_PHASE; empty space does nothing
         }
 
         // Normal gameplay click — always forward to the server, which is the
@@ -663,10 +692,10 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
 
     private String deriveStatus() {
         if (waitingForOpponent) return "Waiting for opponent to connect...";
-        if (inItemPhase) return "Pick your items, then click READY.";
-        // READY already sent but the server hasn't advanced past the item
-        // phase (activePlayer stays 0 until the next serve is prepared).
-        if (itemReadySent && activePlayer == 0) return "Waiting for opponent's items...";
+        if (inItemPhase) {
+            if (itemReadySent) return "Waiting for opponent...";
+            return "Pick your items, then press END SELECTION.";
+        }
         if (!ballVisible) {
             if (activePlayer == playerNumber) return "Click anywhere to serve.";
             return "Waiting for opponent to serve...";
