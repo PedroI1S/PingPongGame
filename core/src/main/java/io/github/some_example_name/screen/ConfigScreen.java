@@ -282,7 +282,7 @@ public final class ConfigScreen extends BaseScreen {
                 sliders.add(makeVolSlider(sliderX, widgetY(2) - 6f, sliderW, s::getSfxVolume,    s::setSfxVolume));
                 toggles.add(new Toggle(toggleX, widgetY(3) - 6f,
                     () -> s.getMasterVolume() == 0,
-                    on -> s.setMasterVolume(on ? 0 : 80)));
+                    on -> s.setMasterVolume(on ? 0 : 100)));
             }
             case GRAPHICS -> {
                 int i = 0;

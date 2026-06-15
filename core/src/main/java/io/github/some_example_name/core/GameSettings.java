@@ -50,7 +50,7 @@ public final class GameSettings {
     private int windowResolutionPresetIndex = 2; // 1280×720 — matches the world space
 
     // ── Audio (0–100) ─────────────────────────────────────────────────────────
-    private int masterVolume = 80;
+    private int masterVolume = 100;
     private int musicVolume  = 60;
     private int sfxVolume    = 90;
 

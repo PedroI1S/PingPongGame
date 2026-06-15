@@ -169,9 +169,9 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         }
         backgroundMusic = context.getAssets().getBackgroundMusic();
         backgroundMusic.setLooping(true);
-        // Respect Master × Music settings on (re)entry.  The base 0.25 keeps
-        // the track unobtrusive when the player leaves everything at 100%.
-        backgroundMusic.setVolume(0.25f * context.getSettings().getMusicGain());
+        // Respect Master × Music settings on (re)entry.  The base 0.35 keeps
+        // the track present but under the SFX when everything is left at 100%.
+        backgroundMusic.setVolume(0.35f * context.getSettings().getMusicGain());
         backgroundMusic.play();
 
         netInput = new NetInput();
@@ -221,7 +221,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             com.badlogic.gdx.math.collision.Ray hoverRay =
                 arena.getCamera().getPickRay(netInput.lastMouseX, netInput.lastMouseY);
             if (itemPhaseRenderer.updateHover(hoverRay, 1)) {
-                context.getAssets().getUiHoverSfx().play(getSfxGain() * 0.4f);
+                context.getAssets().getUiHoverSfx().play(getSfxGain() * 0.5f);
             }
             itemPhaseRenderer.update(delta);
             arena.getModelBatch().begin(arena.getCamera());
@@ -237,7 +237,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             boolean wasHovered = readyButton.hovered;
             readyButton.updateHover(tmpUiWorld.x, tmpUiWorld.y);
             if (!wasHovered && readyButton.hovered) {
-                context.getAssets().getUiHoverSfx().play(getSfxGain() * 0.4f);
+                context.getAssets().getUiHoverSfx().play(getSfxGain() * 0.5f);
             }
         }
 
@@ -323,7 +323,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         for (FlyState f : myFlies)  if (f.alive) alive++;
         for (FlyState f : oppFlies) if (f.alive) alive++;
         if (alive > 0 && !flyBuzzPlaying) {
-            flyBuzzId = context.getAssets().getFlyBuzzSfx().loop(getSfxGain() * 0.25f);
+            flyBuzzId = context.getAssets().getFlyBuzzSfx().loop(getSfxGain() * 0.35f);
             flyBuzzPlaying = true;
         } else if (alive == 0 && flyBuzzPlaying) {
             stopFlyBuzz();
@@ -365,7 +365,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     private void confirmReady() {
         if (itemReadySent) return;
         itemReadySent = true; // stay in the item phase; the button now shows WAITING
-        context.getAssets().getUiClickSfx().play(getSfxGain() * 0.6f);
+        context.getAssets().getUiClickSfx().play(getSfxGain() * 0.8f);
         if (conn != null) conn.sendItemReady();
     }
 
@@ -390,7 +390,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
                     .getPickRay(netInput.lastClickX, netInput.lastClickY);
                 ItemType picked = itemPhaseRenderer.pickItem(ray, 1);
                 if (picked != null) {
-                    context.getAssets().getUiClickSfx().play(getSfxGain() * 0.6f);
+                    context.getAssets().getUiClickSfx().play(getSfxGain() * 0.8f);
                     if (conn != null) conn.sendUseItem(picked.getId());
                 }
             }
@@ -458,10 +458,10 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         int themCurr = (playerNumber == 1) ? p2l         : p1l;
         if (myCurr < myPrev) {
             triggerShake(0.40f, 0.55f);
-            context.getAssets().getLifeLostSfx().play(getSfxGain() * 0.8f);
+            context.getAssets().getLifeLostSfx().play(getSfxGain() * 1.0f);
         } else if (themCurr < themPrev) {
             triggerShake(0.20f, 0.20f);
-            context.getAssets().getLifeLostSfx().play(getSfxGain() * 0.45f);
+            context.getAssets().getLifeLostSfx().play(getSfxGain() * 0.6f);
         }
 
         p1lives   = p1l;
@@ -479,9 +479,9 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     @Override
     public void onSfx(int sfxType) {
         if (sfxType == PacketType.SFX_PADDLE) {
-            paddleHitSfx.play(getSfxGain() * 0.7f);
+            paddleHitSfx.play(getSfxGain() * 0.95f);
         } else if (sfxType == PacketType.SFX_TABLE) {
-            tableHitSfx.play(getSfxGain() * 0.6f);
+            tableHitSfx.play(getSfxGain() * 0.85f);
             if (ballVisible) {
                 spawnBounceSparks(renderedBallPos.x, renderedBallPos.y, renderedBallPos.z);
             }
@@ -535,7 +535,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         Gdx.app.postRunnable(() -> {
             ItemType t = ItemType.fromId((byte) itemId);
             if (t == null) return;
-            context.getAssets().getItemUseSfx().play(getSfxGain() * 0.7f);
+            context.getAssets().getItemUseSfx().play(getSfxGain() * 0.9f);
             List<ItemType> inv = (byPlayer == playerNumber) ? myItems : oppItems;
             inv.remove(t);
             if (itemPhaseRenderer != null) {
