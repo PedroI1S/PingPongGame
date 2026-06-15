@@ -18,6 +18,7 @@ import io.github.some_example_name.core.GameSession;
 import io.github.some_example_name.model.ItemType;
 import io.github.some_example_name.network.GameConnection;
 import io.github.some_example_name.network.PacketType;
+import io.github.some_example_name.render.ItemCopy;
 import io.github.some_example_name.render.ItemPhaseRenderer;
 import io.github.some_example_name.render.MatchArenaRenderer;
 import io.github.some_example_name.world.FlyState;
@@ -235,6 +236,13 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             String readyLabel = itemReadySent ? "WAITING..." : "[ READY ]";
             drawCentered(batch, context.getBodyFont(), readyLabel,
                 GameConfig.WORLD_WIDTH * 0.5f, 60f, Palette.TEXT);
+            ItemType hov = itemPhaseRenderer != null ? itemPhaseRenderer.hoveredType(1) : null;
+            if (hov != null) {
+                drawCentered(batch, context.getBodyFont(), ItemCopy.name(hov),
+                    GameConfig.WORLD_WIDTH * 0.5f, 240f, Palette.TEXT);
+                drawCentered(batch, context.getBodyFont(), ItemCopy.description(hov),
+                    GameConfig.WORLD_WIDTH * 0.5f, 212f, Palette.TEXT_DIM);
+            }
         }
         if (roundOverlayTimer > 0f) {
             roundOverlayTimer -= delta;
