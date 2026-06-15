@@ -675,19 +675,21 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
     }
 
     private void drawEventLog(SpriteBatch batch, float delta) {
-        if (!context.getSettings().isEventLogEnabled()) return;
+        // Always age/evict (even when hidden) so re-enabling the log doesn't replay stale lines.
+        boolean show = context.getSettings().isEventLogEnabled();
         java.util.Iterator<LogLine> it = logLines.iterator();
         int i = 0;
         while (it.hasNext()) {
             LogLine line = it.next();
             line.age += delta;
             if (line.age >= LOG_LIFETIME) { it.remove(); continue; }
+            if (!show) continue;
             float alpha = Math.min(1f, (LOG_LIFETIME - line.age) / LOG_FADE_SECS);
             context.getBodyFont().setColor(Palette.TEXT_DIM.r, Palette.TEXT_DIM.g, Palette.TEXT_DIM.b, alpha);
             context.getBodyFont().draw(batch, line.text, GameConfig.HUD_PADDING, 610f - i * 24f);
             i++;
         }
-        context.getBodyFont().setColor(Palette.TEXT);
+        if (show) context.getBodyFont().setColor(Palette.TEXT);
     }
 
     private String deriveStatus() {

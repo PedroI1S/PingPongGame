@@ -734,7 +734,7 @@ public final class MatchWorld3D {
         phase = Phase.ITEM_PHASE;
         ballVisible = false;
         phaseTimer = ITEM_PHASE_TIMEOUT;
-        statusText = "Use your items, then press READY.";
+        statusText = "Use your items, then press END SELECTION.";
     }
 
     private byte[] dealItems(PlayerInventory inv, ItemType[] pool, int count) {
