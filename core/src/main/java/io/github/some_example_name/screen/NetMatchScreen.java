@@ -5,6 +5,8 @@ import com.badlogic.gdx.Input;
 import com.badlogic.gdx.InputAdapter;
 import com.badlogic.gdx.audio.Music;
 import com.badlogic.gdx.audio.Sound;
+import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.RandomXS128;
@@ -22,6 +24,7 @@ import io.github.some_example_name.render.ItemCopy;
 import io.github.some_example_name.render.ItemPhaseRenderer;
 import io.github.some_example_name.render.MatchArenaRenderer;
 import io.github.some_example_name.ui.Button;
+import io.github.some_example_name.ui.UIDraw;
 import io.github.some_example_name.world.FlyState;
 import io.github.some_example_name.world.ImpactParticle3D;
 import io.github.some_example_name.world.physics.BallPhysics;
@@ -164,7 +167,8 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         }
         if (readyButton == null) {
             float w = 240f, h = 56f;
-            readyButton = new Button(GameConfig.WORLD_WIDTH * 0.5f - w * 0.5f, 40f, w, h,
+            // Lower-left, clear of the centred status text and the upper-left event log.
+            readyButton = new Button(GameConfig.HUD_PADDING, 40f, w, h,
                 "END SELECTION", Palette.RED, this::confirmReady);
         }
         backgroundMusic = context.getAssets().getBackgroundMusic();
@@ -275,12 +279,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
                     context.getBodyFont(), context.getGlyphLayout());
             }
             ItemType hov = itemPhaseRenderer != null ? itemPhaseRenderer.hoveredType(1) : null;
-            if (hov != null) {
-                drawCentered(batch, context.getBodyFont(), ItemCopy.name(hov),
-                    GameConfig.WORLD_WIDTH * 0.5f, 240f, Palette.TEXT);
-                drawCentered(batch, context.getBodyFont(), ItemCopy.description(hov),
-                    GameConfig.WORLD_WIDTH * 0.5f, 212f, Palette.TEXT_DIM);
-            }
+            if (hov != null) drawItemTooltip(batch, hov);
         }
         if (roundOverlayTimer > 0f) {
             roundOverlayTimer -= delta;
@@ -674,22 +673,73 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
         };
     }
 
+    private static final float LOG_LINE_H = 24f;
+    private static final float LOG_TOP_Y  = 610f; // top edge of the newest line
+
     private void drawEventLog(SpriteBatch batch, float delta) {
-        // Always age/evict (even when hidden) so re-enabling the log doesn't replay stale lines.
-        boolean show = context.getSettings().isEventLogEnabled();
+        // Age/evict every frame (even when hidden) so re-enabling doesn't replay stale lines.
+        // First pass: advance ages, drop expired, and measure the widest surviving line.
+        float maxW = 0f;
+        int n = 0;
         java.util.Iterator<LogLine> it = logLines.iterator();
-        int i = 0;
         while (it.hasNext()) {
             LogLine line = it.next();
             line.age += delta;
             if (line.age >= LOG_LIFETIME) { it.remove(); continue; }
-            if (!show) continue;
+            context.getGlyphLayout().setText(context.getBodyFont(), line.text);
+            if (context.getGlyphLayout().width > maxW) maxW = context.getGlyphLayout().width;
+            n++;
+        }
+        if (!context.getSettings().isEventLogEnabled() || n == 0) return;
+
+        // Opaque backing box sized to the content, so the text reads over the busy 3D scene.
+        float padX = 8f, padY = 6f;
+        float boxW = maxW + padX * 2f;
+        float boxH = n * LOG_LINE_H + padY * 2f;
+        float boxX = GameConfig.HUD_PADDING - padX;
+        float boxBottom = LOG_TOP_Y + padY - boxH;
+        Texture pixel = context.getAssets().getProceduralAssets().getPixel();
+        UIDraw.fill(batch, pixel, Color.BLACK, 0.85f, boxX, boxBottom, boxW, boxH);
+        UIDraw.border(batch, pixel, Palette.BORDER, boxX, boxBottom, boxW, boxH, 1f);
+
+        // Second pass: draw newest-on-top, each line fading over its final second.
+        int i = 0;
+        for (LogLine line : logLines) {
             float alpha = Math.min(1f, (LOG_LIFETIME - line.age) / LOG_FADE_SECS);
-            context.getBodyFont().setColor(Palette.TEXT_DIM.r, Palette.TEXT_DIM.g, Palette.TEXT_DIM.b, alpha);
-            context.getBodyFont().draw(batch, line.text, GameConfig.HUD_PADDING, 610f - i * 24f);
+            context.getBodyFont().setColor(Palette.TEXT.r, Palette.TEXT.g, Palette.TEXT.b, alpha);
+            context.getBodyFont().draw(batch, line.text, GameConfig.HUD_PADDING, LOG_TOP_Y - i * LOG_LINE_H);
             i++;
         }
-        if (show) context.getBodyFont().setColor(Palette.TEXT);
+        context.getBodyFont().setColor(Palette.TEXT);
+    }
+
+    /** Floating tooltip near the cursor describing the hovered item, over an opaque box. */
+    private void drawItemTooltip(SpriteBatch batch, ItemType item) {
+        String name = ItemCopy.name(item);
+        String desc = ItemCopy.description(item);
+        context.getGlyphLayout().setText(context.getBodyFont(), name);
+        float maxW = context.getGlyphLayout().width;
+        context.getGlyphLayout().setText(context.getBodyFont(), desc);
+        maxW = Math.max(maxW, context.getGlyphLayout().width);
+
+        float lineH = 24f, padX = 10f, padY = 8f;
+        float boxW = maxW + padX * 2f;
+        float boxH = 2f * lineH + padY * 2f;
+
+        // Anchor down-right of the cursor, clamped inside the viewport.
+        toUiWorld(netInput.lastMouseX, netInput.lastMouseY);
+        float bx = Math.max(8f, Math.min(tmpUiWorld.x + 18f, GameConfig.WORLD_WIDTH - boxW - 8f));
+        float byTop = Math.max(boxH + 8f, Math.min(tmpUiWorld.y - 18f, GameConfig.WORLD_HEIGHT - 8f));
+        float boxBottom = byTop - boxH;
+
+        Texture pixel = context.getAssets().getProceduralAssets().getPixel();
+        UIDraw.fill(batch, pixel, Color.BLACK, 0.85f, bx, boxBottom, boxW, boxH);
+        UIDraw.border(batch, pixel, Palette.BORDER, bx, boxBottom, boxW, boxH, 1f);
+        context.getBodyFont().setColor(Palette.TEXT);
+        context.getBodyFont().draw(batch, name, bx + padX, byTop - padY);
+        context.getBodyFont().setColor(Palette.TEXT_DIM);
+        context.getBodyFont().draw(batch, desc, bx + padX, byTop - padY - lineH);
+        context.getBodyFont().setColor(Palette.TEXT);
     }
 
     private String deriveStatus() {
