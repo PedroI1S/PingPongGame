@@ -393,10 +393,10 @@ public final class MatchWorld3D {
     }
 
     private void updateItemPhase(float delta) {
-        // Punch timers must NOT tick during item selection — the effect should
-        // only count down while the rally is actually in progress.
-        phaseTimer -= delta;
-        if ((p1Ready && p2Ready) || phaseTimer <= 0f) {
+        // For now the item phase ends ONLY when both players have pressed END
+        // SELECTION — the ITEM_PHASE_TIMEOUT auto-advance is disabled. (Re-enable
+        // by restoring the "|| phaseTimer <= 0f" guard below.)
+        if (p1Ready && p2Ready) {
             p1Ready = false;
             p2Ready = false;
             prepareServe(GameConfig.BETWEEN_POINTS_DELAY, buildServeStatusText());
