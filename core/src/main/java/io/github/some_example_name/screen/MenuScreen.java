@@ -19,14 +19,16 @@ import java.util.List;
 /**
  * Entry-screen menu, redone for the Buckshot-Roulette-style bunker look.
  *
- * <p>Two clickable buttons stacked centre-screen: VS BOT and MULTIPLAYER.
- * Keyboard shortcuts (ENTER / SPACE / M) still work as fallbacks.</p>
+ * <p>Three action buttons in a centre-screen row — VS BOT, TUTORIAL,
+ * MULTIPLAYER — over a CONFIGURATION button. Keyboard shortcuts
+ * (ENTER / T / M / C) still work as fallbacks.</p>
  */
 public final class MenuScreen extends MenuBaseScreen {
 
     private float clock;
 
     private final Button vsBotBtn;
+    private final Button tutorialBtn;
     private final Button multiplayerBtn;
     private final Button configBtn;
     private final List<Button> buttons;
@@ -46,16 +48,19 @@ public final class MenuScreen extends MenuBaseScreen {
         //   200..256  CONFIGURATION button, 56 tall
         // No second caption was needed — the CONFIGURATION button labels itself.
         vsBotBtn = new Button(
-            cx - 220f, 320f, 200f, 100f,
+            cx - 320f, 320f, 200f, 100f,
             "[ VS BOT ]", Palette.RED, game::openMatch);
+        tutorialBtn = new Button(
+            cx - 100f, 320f, 200f, 100f,
+            "[ TUTORIAL ]", Palette.GREEN, game::openTutorial);
         multiplayerBtn = new Button(
-            cx +  20f, 320f, 200f, 100f,
+            cx + 120f, 320f, 200f, 100f,
             "[ MULTIPLAYER ]", Palette.WARM, game::openMultiplayerLobby);
         configBtn = new Button(
             cx - 100f, 200f, 200f, 56f,
             "CONFIGURATION", Palette.TEXT_DIM, game::openConfig);
 
-        buttons = Arrays.asList(vsBotBtn, multiplayerBtn, configBtn);
+        buttons = Arrays.asList(vsBotBtn, tutorialBtn, multiplayerBtn, configBtn);
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -97,7 +102,7 @@ public final class MenuScreen extends MenuBaseScreen {
         UIDraw.topBar(batch, pixel, body, context.getGlyphLayout(),
             "ARP // BOOT 0.1.0", "STATUS: LIVE", Palette.WARM);
         UIDraw.bottomBar(batch, pixel, body, context.getGlyphLayout(),
-            "CLICK A BUTTON  --  OR PRESS  ENTER / M / C",
+            "CLICK A BUTTON  --  OR PRESS  ENTER / T / M / C",
             lastOutcomeText(), lastOutcomeColor());
 
         float cx = GameConfig.WORLD_WIDTH * 0.5f;
@@ -116,11 +121,14 @@ public final class MenuScreen extends MenuBaseScreen {
 
         for (Button b : buttons) b.draw(batch, pixel, body, context.getGlyphLayout());
 
-        // Single caption row sits below both action buttons (which end at
+        // Single caption row sits below the three action buttons (which end at
         // y = 320) and above the CONFIGURATION button (top at y = 256).
-        UIDraw.centered(batch, body, context.getGlyphLayout(),
-            "VS BOT — RUN A LOCAL DUEL.    MULTIPLAYER — HOST OR JOIN A LAN MATCH.",
-            cx, 295f, Palette.TEXT_DIM);
+        String caption = context.getSettings().isTutorialCompleted()
+            ? "VS BOT — LOCAL DUEL.    TUTORIAL — DRILL COURT.    MULTIPLAYER — LAN MATCH."
+            : "NEW HERE?  TUTORIAL TEACHES THE SPIN — START THERE.";
+        UIDraw.centered(batch, body, context.getGlyphLayout(), caption,
+            cx, 295f, context.getSettings().isTutorialCompleted()
+                ? Palette.TEXT_DIM : Palette.GREEN);
 
         // Pulsing live-dot in the bulb-warm corner of the top bar.
         boolean blink = ((int)(clock * 1.4f)) % 2 == 0;
@@ -163,6 +171,10 @@ public final class MenuScreen extends MenuBaseScreen {
     protected boolean onKeyDown(int keycode) {
         if (keycode == Input.Keys.ENTER || keycode == Input.Keys.SPACE) {
             game.openMatch();
+            return true;
+        }
+        if (keycode == Input.Keys.T) {
+            game.openTutorial();
             return true;
         }
         if (keycode == Input.Keys.M) {

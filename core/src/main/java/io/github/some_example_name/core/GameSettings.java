@@ -36,6 +36,8 @@ public final class GameSettings {
     private static final String KEY_SFX_VOL        = "sfxVol";
     private static final String KEY_FPS_COUNTER    = "fpsCounter";
     private static final String KEY_SCREEN_SHAKE   = "screenShake";
+    private static final String KEY_EVENT_LOG      = "eventLog";
+    private static final String KEY_TUTORIAL_DONE  = "tutorialDone";
 
     /**
      * Default OFF.  The retro pixel filter is a stylistic choice the player
@@ -48,13 +50,15 @@ public final class GameSettings {
     private int windowResolutionPresetIndex = 2; // 1280×720 — matches the world space
 
     // ── Audio (0–100) ─────────────────────────────────────────────────────────
-    private int masterVolume = 80;
+    private int masterVolume = 100;
     private int musicVolume  = 60;
     private int sfxVolume    = 90;
 
     // ── Game preferences ──────────────────────────────────────────────────────
     private boolean showFpsCounter = false;
     private boolean screenShake    = true;
+    private boolean eventLog       = true;
+    private boolean tutorialCompleted;
 
     public void load() {
         if (Gdx.app == null) return;
@@ -72,8 +76,10 @@ public final class GameSettings {
         masterVolume   = clampVol(prefs.getInteger(KEY_MASTER_VOL, masterVolume));
         musicVolume    = clampVol(prefs.getInteger(KEY_MUSIC_VOL,  musicVolume));
         sfxVolume      = clampVol(prefs.getInteger(KEY_SFX_VOL,    sfxVolume));
-        showFpsCounter = prefs.getBoolean(KEY_FPS_COUNTER, showFpsCounter);
-        screenShake    = prefs.getBoolean(KEY_SCREEN_SHAKE, screenShake);
+        showFpsCounter    = prefs.getBoolean(KEY_FPS_COUNTER, showFpsCounter);
+        screenShake       = prefs.getBoolean(KEY_SCREEN_SHAKE, screenShake);
+        eventLog          = prefs.getBoolean(KEY_EVENT_LOG, eventLog);
+        tutorialCompleted = prefs.getBoolean(KEY_TUTORIAL_DONE, tutorialCompleted);
     }
 
     public void save() {
@@ -88,6 +94,8 @@ public final class GameSettings {
         prefs.putInteger(KEY_SFX_VOL,    sfxVolume);
         prefs.putBoolean(KEY_FPS_COUNTER, showFpsCounter);
         prefs.putBoolean(KEY_SCREEN_SHAKE, screenShake);
+        prefs.putBoolean(KEY_EVENT_LOG, eventLog);
+        prefs.putBoolean(KEY_TUTORIAL_DONE, tutorialCompleted);
         prefs.flush();
     }
 
@@ -112,6 +120,10 @@ public final class GameSettings {
     public void    setShowFpsCounter(boolean v) { showFpsCounter = v; save(); }
     public boolean isScreenShakeEnabled() { return screenShake; }
     public void    setScreenShakeEnabled(boolean v) { screenShake = v; save(); }
+    public boolean isEventLogEnabled()    { return eventLog; }
+    public void    setEventLogEnabled(boolean v) { eventLog = v; save(); }
+    public boolean isTutorialCompleted()  { return tutorialCompleted; }
+    public void    setTutorialCompleted(boolean v) { tutorialCompleted = v; save(); }
 
     public boolean isPostProcessingEnabled() {
         return postProcessingEnabled;

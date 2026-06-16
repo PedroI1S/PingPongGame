@@ -56,6 +56,8 @@ public final class GameConnection {
         default void onFlySpawn(int owner, float[] xs, float[] zs)   {}
         /** @param owner player (1/2) whose fly list the index refers to */
         default void onFlyKilled(int owner, int flyIndex)            {}
+        /** @param subject player (1/2) the event concerns */
+        default void onLogEvent(int code, int subject)              {}
         // Item phase — Client → Server
         default void onItemReady()                                   {}
         default void onUseItem(int itemId)                           {}
@@ -224,6 +226,11 @@ public final class GameConnection {
                         int idx   = in.readByte() & 0xFF;
                         dispatch.execute(() -> listener.onFlyKilled(owner, idx));
                     }
+                    case PacketType.LOG_EVENT -> {
+                        int code    = in.readByte() & 0xFF;
+                        int subject = in.readByte() & 0xFF;
+                        dispatch.execute(() -> listener.onLogEvent(code, subject));
+                    }
                     case PacketType.ITEM_READY -> dispatch.execute(() -> listener.onItemReady());
                     case PacketType.USE_ITEM -> {
                         int id = in.readByte() & 0xFF;
@@ -337,6 +344,14 @@ public final class GameConnection {
             out.writeByte(PacketType.FLY_KILLED);
             out.writeByte(owner);
             out.writeByte(flyIndex);
+        });
+    }
+
+    public void sendLogEvent(int code, int subject) {
+        write(() -> {
+            out.writeByte(PacketType.LOG_EVENT);
+            out.writeByte(code);
+            out.writeByte(subject);
         });
     }
 

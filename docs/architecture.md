@@ -19,9 +19,9 @@ PingPongGame/
 
 | Module | Depends on | Brings |
 |---|---|---|
-| `sim` | `gdx` (math only) | `MatchWorld3D`, `GameServer`, `GameConnection`, `PacketType`, `ServerPickRay`; physics package: `BallPhysics`, `PaddleContact`, `BotPlanner`, `PhysicsConfig`, `BallState`, `StepContacts`; all model / config classes |
+| `sim` | `gdx` (math only) | `MatchWorld3D`, `GameServer`, `GameConnection`, `PacketType`, `ServerPickRay`; physics package: `BallPhysics`, `PaddleContact`, `BotPlanner`, `PhysicsConfig`, `BallState`, `StepContacts`; tutorial package: `DrillCourse`, `TutorialGeometry`, `ZoneRect`; all model / config classes |
 | `server` | `sim` | `ServerMain` (~10 lines), application/jar Gradle setup |
-| `core` | `sim`, libGDX UI | every `Screen`, `MatchArenaRenderer`, `RetroPostProcess`, `GameContext`, `GameSession`, `GameSettings`, `InProcessServer`, `LocalServerProcess` |
+| `core` | `sim`, libGDX UI | every `Screen` (incl. `TutorialScreen`), `MatchArenaRenderer`, `RetroPostProcess`, `GameContext`, `GameSession`, `GameSettings`, `InProcessServer`, `LocalServerProcess` |
 | `lwjgl3` | `core` | `Lwjgl3Launcher` |
 
 Why three layers instead of two?
@@ -125,7 +125,67 @@ Key decisions:
 - **Tunables** live entirely in `PhysicsConfig`. `createDefault()` reproduces
   today's game feel; any field can be overridden per-match.
 
-### 6. Server-authoritative architecture
+### 6. Tutorial drill course
+
+`sim/tutorial/` is a pure-logic package — no rendering, fully headless-testable.
+
+- **`DrillCourse`** owns a `BallPhysics` + `BallState`, schedules practice feeds, and
+  evaluates attempts against zone predicates. Six drills in order:
+
+  | # | Drill | Technique gate |
+  |---|---|---|
+  | 1 | Timing | contact must be inside the near-strip (z ∈ [3.5, 6.0]) |
+  | 2 | Aim | landing must reach the lit left or right corridor |
+  | 3 | Topspin | contact-time spinX < −10 **and** landing in the near band (z ∈ [−3.4, −0.8]) |
+  | 4 | Backspin | contact-time spinX > +10 **and** landing in the deep band (z ∈ [−6.6, −3.8]) |
+  | 5 | Curve | contact-time |spinY| > 10 **and** landing in the centre zone; pole intercept fails the attempt |
+  | 6 | Serve | serve must land in the alternating short-left / deep-right zone |
+
+  Counterintuitive zone pairing: under the shipped `PhysicsConfig` gains, pace is
+  offset-magnitude-driven, so a **topspin click** (flat arc + Magnus dip) lands
+  *short* and a **backspin click** (loft + float) lands *deep*. The bands are
+  sized so a flat centre-click falls in the gap between them and passes neither
+  drill — the zone forces the technique.
+
+  Spin and curve drills play a **slow-motion demo ball** first (timeScale halved via
+  `DEMO_SLOWMO = 0.5`). Demo balls are scripted ideal shots from the player's side —
+  not incoming feeds — so the on-screen curve handedness matches what the player
+  must reproduce. Demo balls ignore player clicks.
+
+  The test suite (`DrillCourseTest`, `SpinDrillTest`, `CurveServeDrillTest`) includes
+  per-drill beatability tests that drive `DrillCourse` headlessly with scripted
+  ideal offsets and assert graduation to the next drill. These are pinned to
+  `PhysicsConfig.createDefault()`, so a physics retune that silently breaks a drill
+  fails CI.
+
+- **`TutorialGeometry`** — single source of truth for all zone constants, pole
+  geometry (`POLE_X=0, POLE_Z=−3, POLE_RADIUS=0.45, POLE_HEIGHT=1.4 m above table`),
+  and `segmentHitsPole` (2D swept circle-vs-cylinder check with height gate).
+
+- **`ZoneRect`** — immutable axis-aligned rectangle on the table plane (x/z);
+  `contains` is inclusive on all edges.
+
+`TutorialScreen` (in `core/`) consumes `DrillCourse` and renders it:
+
+- Runs entirely client-side — no `GameServer`, no `GameConnection`, no network.
+- After all six drills pass, starts a graduation rally: a real local `MatchWorld3D`
+  in BOT mode, 3 lives. The bot profile is softened immediately after construction
+  (`aimSigma = 0.95`, `reactionDelay = 0.8 s` via `getBotProfile()`). The item
+  phase is skipped by calling `playerReady(1)` + `playerReady(2)` as soon as the
+  world enters the item phase.
+- Zones and pole are rendered as 3D overlay models via the arena renderer's
+  `getModelBatch()` / `getCamera()` / `getEnvironment()` accessors — no new render
+  infrastructure.
+
+Menu integration:
+
+- `MenuScreen` shows a `[ TUTORIAL ]` button (T key shortcut) between VS BOT and
+  MULTIPLAYER.
+- `GameSettings.tutorialCompleted` (persisted via libGDX `Preferences`) gates the
+  caption below the buttons: uncompleted shows a first-run nudge; completed shows
+  the normal mode summary.
+
+### 7. Server-authoritative architecture
 
 `GameServer` (in `sim/`) is a persistent loop:
 
@@ -165,7 +225,7 @@ Two entry points for a client to reach this server:
   path tried first by `Main.autoLaunchServer()`; the in-process server
   above is the fallback used when the jar can't be located or launched.
 
-### 7. Click-based protocol
+### 8. Click-based protocol
 
 Clients **never compute physics**. On a mouse click they emit:
 
@@ -183,7 +243,7 @@ The server reconstructs the same camera the client used
 - A malicious client can't fabricate an impossible return — `PaddleContact`
   is run server-side and `PaddleContact.clamp` is the velocity/spin envelope.
 
-### 8. Networking layer
+### 9. Networking layer
 
 - `sim/network/GameConnection` — typed binary wrapper around `Socket`.
   Reader thread decodes packets and dispatches via an `Executor`. Clients
@@ -199,7 +259,7 @@ The server reconstructs the same camera the client used
 - `sim/network/RoomCode` — host's IPv4 encoded as a 7-character base-36
   string so players don't type dotted quads.
 
-### 9. Server hit-test parity
+### 10. Server hit-test parity
 
 `MatchArenaRenderer` builds its `PerspectiveCamera` with:
 
@@ -215,7 +275,7 @@ up = (0, 1, 0)
 `cam.getPickRay(x, y)` produces the same ray the client sees. The
 viewport dimensions sent in `CLICK` make this resolution-independent.
 
-### 10. Rendering
+### 11. Rendering
 
 - **`MatchArenaRenderer`** owns the 3D scene (table / net / ball / floor)
   and the camera. Exposes `setCameraShake(dx, dy, dz)` so the match
@@ -226,7 +286,7 @@ viewport dimensions sent in `CLICK` make this resolution-independent.
 - 2D HUD over the 3D pass: lives, status text, aim ring, bounce particles
   projected back onto screen-space, optional FPS counter overlay.
 
-### 11. Settings
+### 12. Settings
 
 `GameSettings` persists via libGDX `Preferences`:
 

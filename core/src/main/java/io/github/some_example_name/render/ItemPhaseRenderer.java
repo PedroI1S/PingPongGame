@@ -245,6 +245,15 @@ public final class ItemPhaseRenderer implements Disposable {
         return null;
     }
 
+    /** The item the cursor is currently over (first live hovered entry), or null. */
+    public ItemType hoveredType(int playerNumber) {
+        Array<ItemEntry> entries = playerNumber == 1 ? p1Entries : p2Entries;
+        for (ItemEntry e : entries) {
+            if (e.hovered && !e.used) return e.type;
+        }
+        return null;
+    }
+
     private static boolean raySphere(Ray ray, float cx, float cy, float cz) {
         float ox = ray.origin.x - cx, oy = ray.origin.y - cy, oz = ray.origin.z - cz;
         float b = 2f * (ray.direction.x * ox + ray.direction.y * oy + ray.direction.z * oz);

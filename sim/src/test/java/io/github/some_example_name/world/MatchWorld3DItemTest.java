@@ -32,9 +32,12 @@ class MatchWorld3DItemTest {
         assertEquals(MatchWorld3D.Phase.PREPARE_SERVE, world.getPhase());
     }
 
-    @Test void itemPhaseTimeoutAdvancesToPrepareServe() {
+    @Test void itemPhaseWaitsForBothReady_noTimeout() {
         world.enterItemPhase();
-        world.update(16f); // advance past 15s timeout
+        world.update(16f); // formerly advanced past a 15s timeout — now it must NOT
+        assertEquals(MatchWorld3D.Phase.ITEM_PHASE, world.getPhase());
+        world.playerReady(1);
+        world.playerReady(2);
         assertEquals(MatchWorld3D.Phase.PREPARE_SERVE, world.getPhase());
     }
 

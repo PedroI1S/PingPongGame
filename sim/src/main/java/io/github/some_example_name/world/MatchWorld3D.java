@@ -6,7 +6,9 @@ import com.badlogic.gdx.math.RandomXS128;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.Ray;
 import com.badlogic.gdx.utils.Array;
+import com.badlogic.gdx.utils.IntArray;
 import com.badlogic.gdx.utils.Pool;
+import io.github.some_example_name.network.PacketType;
 import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.model.ArenaSide;
 import io.github.some_example_name.model.ItemEffects;
@@ -78,6 +80,7 @@ public final class MatchWorld3D {
     private boolean ballVisible;
     private boolean crossedNet;
     private int bouncesOnPlayerSide;
+    private int bouncesOnClientSide;
 
     /**
      * Who serves the next point.  1 = P1 (player), 2 = P2 (bot in single-player,
@@ -119,6 +122,13 @@ public final class MatchWorld3D {
     // Audio events — set true on relevant frames, consumed by the screen.
     private boolean paddleHitEvent;
     private boolean tableBounceEvent;
+
+    /** Packed (code<<8 | subject) gameplay events for the client log, drained each tick by the server. */
+    private final IntArray logEvents = new IntArray();
+
+    private void logEvent(byte code, int subjectPlayer) {
+        logEvents.add(((code & 0xFF) << 8) | (subjectPlayer & 0xFF));
+    }
 
     public MatchWorld3D(MatchConfig config, RandomXS128 random) {
         this.config = config;
@@ -181,8 +191,8 @@ public final class MatchWorld3D {
         // negative; past -PVP_SERVE_TIMEOUT the serve is forfeited.
         if (matchMode == MatchMode.PVP) {
             if (phaseTimer <= -PVP_SERVE_TIMEOUT) {
-                if (nextServer == 1) handlePlayerMiss();
-                else                 botMissedShot();
+                if (nextServer == 1) handlePlayerMiss(PacketType.LOG_TIMEOUT);
+                else                 botMissedShot(PacketType.LOG_TIMEOUT);
             }
             return;
         }
@@ -214,6 +224,7 @@ public final class MatchWorld3D {
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
+        bouncesOnClientSide = 0;
         phase = Phase.INCOMING;
         statusText = "Click the ball as it comes through the table lane.";
     }
@@ -243,9 +254,9 @@ public final class MatchWorld3D {
         if (contacts.tableBounce) {
             if (contacts.bounceZ > 0f && crossedNet) {
                 bouncesOnPlayerSide++;
-                if (bouncesOnPlayerSide >= 2) { handlePlayerMiss(); return; }
+                if (bouncesOnPlayerSide >= 2) { handlePlayerMiss(PacketType.LOG_DOUBLE_BOUNCE); return; }
             } else {
-                botMissedShot(); // landed on its own side (incl. net fall-back)
+                botMissedShot(PacketType.LOG_OUT_OF_BOUNDS); // landed on its own side (incl. net fall-back)
                 return;
             }
         }
@@ -262,11 +273,12 @@ public final class MatchWorld3D {
             }
         }
 
-        if (ball.pos.z > TABLE_HALF_LENGTH + 1.5f) { handlePlayerMiss(); return; }
+        if (ball.pos.z > TABLE_HALF_LENGTH + 1.5f) { handlePlayerMiss(PacketType.LOG_MISS); return; }
         if (ball.pos.y < TABLE_TOP_Y) {
             // fell below table level: long/wide shot is the bot's fault unless it
             // already bounced legally on P1's side (then P1 let it drop)
-            if (bouncesOnPlayerSide == 0) botMissedShot(); else handlePlayerMiss();
+            if (bouncesOnPlayerSide == 0) botMissedShot(PacketType.LOG_OUT_OF_BOUNDS);
+            else handlePlayerMiss(PacketType.LOG_MISS);
         }
     }
 
@@ -283,13 +295,14 @@ public final class MatchWorld3D {
         if (contacts.tableBounce) {
             boolean valid = crossedNet && contacts.bounceZ < 0f;
             if (valid) {
+                bouncesOnClientSide = 1;
                 phase = Phase.BOT_RESOLVE;
                 phaseTimer = GameConfig.NET_CLIENT_MISS_TIMEOUT;
                 statusText = matchMode == MatchMode.PVP
                     ? "P2 — return the ball!"
                     : "Clean return. Bot is trying to answer.";
             } else {
-                handlePlayerMiss(); // bounced on own side (incl. net fall-back)
+                handlePlayerMiss(PacketType.LOG_OUT_OF_BOUNDS); // bounced on own side (incl. net fall-back)
             }
             return;
         }
@@ -309,19 +322,25 @@ public final class MatchWorld3D {
         if (ball.pos.y < TABLE_TOP_Y
             || ball.pos.z < -TABLE_HALF_LENGTH - 4f
             || Math.abs(ball.pos.x) > TABLE_HALF_WIDTH + 6f) {
-            handlePlayerMiss(); // went long/wide or fell — P1's shot failed
+            handlePlayerMiss(PacketType.LOG_OUT_OF_BOUNDS); // went long/wide or fell — P1's shot failed
         }
     }
 
     private void updateBotResolve(float delta) {
         stepBall(delta);
 
+        if (matchMode == MatchMode.PVP && contacts.tableBounce
+            && contacts.bounceZ < 0f && crossedNet) {
+            bouncesOnClientSide++;
+            if (bouncesOnClientSide >= 2) { clientMiss(PacketType.LOG_DOUBLE_BOUNCE); return; }
+        }
+
         // PVP: score immediately if the ball leaves the playable area.
         if (matchMode == MatchMode.PVP) {
             if (ball.pos.z < -TABLE_HALF_LENGTH - 2f
                 || Math.abs(ball.pos.x) > TABLE_HALF_WIDTH + 4f
                 || ball.pos.y < 0f) {
-                clientMiss();
+                clientMiss(PacketType.LOG_OUT_OF_BOUNDS);
                 return;
             }
         }
@@ -329,14 +348,14 @@ public final class MatchWorld3D {
         phaseTimer -= delta;
 
         if (matchMode == MatchMode.PVP) {
-            if (phaseTimer <= 0f) clientMiss();
+            if (phaseTimer <= 0f) clientMiss(PacketType.LOG_TIMEOUT);
             return;
         }
 
         // BOT mode: the planner committed to a swing time at the player's hit.
         botPlanClock += delta;
         if (!botPlanArmed) {
-            if (phaseTimer <= 0f) botMissedShot(); // safety net: plan never armed
+            if (phaseTimer <= 0f) botMissedShot(PacketType.LOG_MISS); // safety net: plan never armed
             return;
         }
         if (botPlanClock < botPlan.strikeTime) return;
@@ -345,7 +364,7 @@ public final class MatchWorld3D {
         // is set unconditionally at the player's hit, so THIS guard (not the flag)
         // is what turns a "won't land" prediction into a miss — keep both checks.
         if (botPlan.whiff || botPlan.strikeTime < 0f) {
-            botMissedShot();
+            botMissedShot(PacketType.LOG_MISS);
             return;
         }
         // Real-ball sanity at the swing moment: if prediction and reality ever
@@ -354,7 +373,7 @@ public final class MatchWorld3D {
         if (ball.pos.y < TABLE_TOP_Y
             || ball.pos.z < -TABLE_HALF_LENGTH - 2f
             || Math.abs(ball.pos.x) > TABLE_HALF_WIDTH + 4f) {
-            botMissedShot();
+            botMissedShot(PacketType.LOG_OUT_OF_BOUNDS);
             return;
         }
         float rampStep = config.getApproachDurationDecay() / Math.max(0.001f,
@@ -367,16 +386,17 @@ public final class MatchWorld3D {
             false, config.getPhysics().basePaceSI, config.getPhysics().baseArcSI);
         crossedNet = false;
         bouncesOnPlayerSide = 0;
+        bouncesOnClientSide = 0;
         phase = Phase.INCOMING;
         statusText = "Bot gets it back. Click the ball as it comes through.";
         paddleHitEvent = true;
     }
 
     private void updateItemPhase(float delta) {
-        // Punch timers must NOT tick during item selection — the effect should
-        // only count down while the rally is actually in progress.
-        phaseTimer -= delta;
-        if ((p1Ready && p2Ready) || phaseTimer <= 0f) {
+        // For now the item phase ends ONLY when both players have pressed END
+        // SELECTION — the ITEM_PHASE_TIMEOUT auto-advance is disabled. (Re-enable
+        // by restoring the "|| phaseTimer <= 0f" guard below.)
+        if (p1Ready && p2Ready) {
             p1Ready = false;
             p2Ready = false;
             prepareServe(GameConfig.BETWEEN_POINTS_DELAY, buildServeStatusText());
@@ -436,7 +456,10 @@ public final class MatchWorld3D {
     }
 
     /** Client timed out without hitting — score a point for the host. */
-    public void clientMiss() {
+    public void clientMiss() { clientMiss(PacketType.LOG_MISS); }
+
+    public void clientMiss(byte reason) {
+        logEvent(reason, 2);
         bot.loseLife();
         if (bot.getLives() <= 0) {
             outcome = MatchOutcome.PLAYER_WIN;
@@ -449,11 +472,10 @@ public final class MatchWorld3D {
     }
 
     /**
-     * Whether the client is allowed to hit right now: ball has crossed the
-     * net to their side (OUTGOING) or bounced there and is waiting (BOT_RESOLVE).
+     * Whether the client is allowed to hit right now: ball has bounced on their
+     * side exactly once (BOT_RESOLVE). Volleys are illegal and scored separately.
      */
     public boolean isClientCanHit() {
-        if (phase == Phase.OUTGOING && crossedNet && ball.pos.z < 0f) return true;
         return phase == Phase.BOT_RESOLVE;
     }
 
@@ -466,6 +488,8 @@ public final class MatchWorld3D {
         float scale = player.getTargetScaleMultiplier() * p1Effects.hitScaleMultiplier();
         float hitRadius = PaddleContact.hitRadius(scale);
         if (!Intersector.intersectRaySphere(pickRay, ball.pos, hitRadius, hitPoint)) return false;
+        // A legal return requires exactly one prior bounce on P1's side.
+        if (bouncesOnPlayerSide == 0) { handlePlayerMiss(PacketType.LOG_VOLLEY); return true; }
 
         float ndx = MathUtils.clamp((hitPoint.x - ball.pos.x) / hitRadius, -1f, 1f);
         float ndy = MathUtils.clamp((hitPoint.y - ball.pos.y) / hitRadius, -1f, 1f);
@@ -526,6 +550,7 @@ public final class MatchWorld3D {
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
+        bouncesOnClientSide = 0;
         phase = Phase.OUTGOING;
         statusText = "P1 serves. P2 must return.";
         paddleHitEvent = true;
@@ -561,14 +586,21 @@ public final class MatchWorld3D {
         if (phase == Phase.PREPARE_SERVE && nextServer == 2) {
             return tryClientServe(pickRay);
         }
+        float scale = bot.getTargetScaleMultiplier() * p2Effects.hitScaleMultiplier();
+        // Volley: P2 struck the ball before it bounced on their side.
+        if (phase == Phase.OUTGOING && crossedNet && ball.pos.z < 0f
+            && Intersector.intersectRaySphere(pickRay, ball.pos, PaddleContact.hitRadius(scale), hitPoint)) {
+            clientMiss(PacketType.LOG_VOLLEY);
+            return true;
+        }
         if (!isClientCanHit()) return false;
         if (!PaddleContact.returnFromRay(pickRay, ball, config.getPhysics(),
-                bot.getTargetScaleMultiplier() * p2Effects.hitScaleMultiplier(),
-                bot.getReturnPowerMultiplier(), p1Effects.incomingSpeedMultiplier(), false)) {
+                scale, bot.getReturnPowerMultiplier(), p1Effects.incomingSpeedMultiplier(), false)) {
             return false;
         }
         crossedNet = false;
         bouncesOnPlayerSide = 0;
+        bouncesOnClientSide = 0;
         phase = Phase.INCOMING;
         statusText = "P2 returns! Ball heading to P1.";
         paddleHitEvent = true;
@@ -592,13 +624,15 @@ public final class MatchWorld3D {
         ballVisible = true;
         crossedNet = false;
         bouncesOnPlayerSide = 0;
+        bouncesOnClientSide = 0;
         phase = Phase.INCOMING;
         statusText = "P2 serves. P1 must return.";
         paddleHitEvent = true;
         return true;
     }
 
-    private void handlePlayerMiss() {
+    private void handlePlayerMiss(byte reason) {
+        logEvent(reason, 1);
         player.loseLife();
         if (player.getLives() <= 0) {
             outcome = MatchOutcome.BOT_WIN;
@@ -610,7 +644,8 @@ public final class MatchWorld3D {
         enterItemPhase();
     }
 
-    private void botMissedShot() {
+    private void botMissedShot(byte reason) {
+        logEvent(reason, 2);
         bot.loseLife();
         if (bot.getLives() <= 0) {
             outcome = MatchOutcome.PLAYER_WIN;
@@ -623,6 +658,7 @@ public final class MatchWorld3D {
     }
 
     private void handlePlayerFlyHit() {
+        logEvent(PacketType.LOG_FLY_HIT, 1);
         player.loseLife();
         if (player.getLives() <= 0) {
             outcome = MatchOutcome.BOT_WIN; ballVisible = false; return;
@@ -632,6 +668,7 @@ public final class MatchWorld3D {
     }
 
     private void handleBotFlyHit() {
+        logEvent(PacketType.LOG_FLY_HIT, 2);
         bot.loseLife();
         if (bot.getLives() <= 0) {
             outcome = MatchOutcome.PLAYER_WIN; ballVisible = false; return;
@@ -697,7 +734,7 @@ public final class MatchWorld3D {
         phase = Phase.ITEM_PHASE;
         ballVisible = false;
         phaseTimer = ITEM_PHASE_TIMEOUT;
-        statusText = "Use your items, then press READY.";
+        statusText = "Use your items, then press END SELECTION.";
     }
 
     private byte[] dealItems(PlayerInventory inv, ItemType[] pool, int count) {
@@ -745,8 +782,13 @@ public final class MatchWorld3D {
             // ITEM_USED broadcast arrives — no server-side state needed.
             case PUNCH       -> { }
             case FLY_BAIT    -> spawnFlies(oppFx, playerNumber == 1 ? 2 : 1);
-            case COIN_FLIP   -> { if (random.nextFloat() < 0.5f) self.loseLife();
-                                  else opp.loseLife(); checkMatchOver(); }
+            case COIN_FLIP   -> {
+                int loser;
+                if (random.nextFloat() < 0.5f) { self.loseLife(); loser = playerNumber; }
+                else { opp.loseLife(); loser = (playerNumber == 1) ? 2 : 1; }
+                logEvent(PacketType.LOG_COIN_FLIP_LOSS, loser);
+                checkMatchOver();
+            }
         }
 
         itemUsedEvent  = true;
@@ -809,6 +851,8 @@ public final class MatchWorld3D {
     public Vector3 getBallVel()                 { return ball.vel; }
     public Vector3 getBallSpin()                { return ball.spin; }
     public float   getBallRadius()              { return BALL_RADIUS; }
+    /** The bot's live difficulty knobs (mutable — the tutorial softens them). */
+    public BotPlanner.Profile getBotProfile()  { return botProfile; }
     public boolean isBallVisible()              { return ballVisible; }
     public int     getPlayerLives()             { return player.getLives(); }
     public int     getBotLives()                { return bot.getLives(); }
@@ -837,4 +881,8 @@ public final class MatchWorld3D {
         netHitEvent = false;
         return v;
     }
+
+    public boolean hasLogEvent() { return logEvents.size > 0; }
+    /** Removes and returns the oldest packed event: {@code (code<<8) | subject}. */
+    public int pollLogEvent() { return logEvents.removeIndex(0); }
 }

@@ -225,6 +225,7 @@ public final class ConfigScreen extends BaseScreen {
             case GAME -> {
                 drawSettingRow(batch, pixel, body, rowX, rowY(0), rowW, "Show FPS Counter", "top-left overlay during the match");
                 drawSettingRow(batch, pixel, body, rowX, rowY(1), rowW, "Screen Shake",     "camera shake on miss");
+                drawSettingRow(batch, pixel, body, rowX, rowY(2), rowW, "Event Log",        "upper-left feed of points, items, faults");
             }
         }
 
@@ -281,7 +282,7 @@ public final class ConfigScreen extends BaseScreen {
                 sliders.add(makeVolSlider(sliderX, widgetY(2) - 6f, sliderW, s::getSfxVolume,    s::setSfxVolume));
                 toggles.add(new Toggle(toggleX, widgetY(3) - 6f,
                     () -> s.getMasterVolume() == 0,
-                    on -> s.setMasterVolume(on ? 0 : 80)));
+                    on -> s.setMasterVolume(on ? 0 : 100)));
             }
             case GRAPHICS -> {
                 int i = 0;
@@ -312,6 +313,8 @@ public final class ConfigScreen extends BaseScreen {
                     s::isShowFpsCounter, s::setShowFpsCounter));
                 toggles.add(new Toggle(toggleX, widgetY(1) - 6f,
                     s::isScreenShakeEnabled, s::setScreenShakeEnabled));
+                toggles.add(new Toggle(toggleX, widgetY(2) - 6f,
+                    s::isEventLogEnabled, s::setEventLogEnabled));
             }
         }
     }

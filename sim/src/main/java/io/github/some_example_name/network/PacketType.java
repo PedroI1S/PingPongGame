@@ -70,6 +70,22 @@ public final class PacketType {
      */
     public static final byte ITEM_READY = 23;
 
+    /**
+     * A loggable gameplay event for the client-side event log.
+     * Payload: {@code byte eventCode} (one of the LOG_* codes below),
+     * {@code byte subjectPlayer} (1 or 2 — the player the event concerns).
+     */
+    public static final byte LOG_EVENT  = 27;
+
+    // ── LOG_EVENT codes ───────────────────────────────────────────────────────
+    public static final byte LOG_VOLLEY         = 1; // struck the ball before it bounced on their side
+    public static final byte LOG_DOUBLE_BOUNCE  = 2; // let it bounce twice on their side
+    public static final byte LOG_OUT_OF_BOUNDS  = 3; // a struck shot left the play area / own half
+    public static final byte LOG_MISS           = 4; // failed to return in time / let it pass
+    public static final byte LOG_TIMEOUT        = 5; // serve clock expired
+    public static final byte LOG_FLY_HIT        = 6; // ball hit an unswatted fly
+    public static final byte LOG_COIN_FLIP_LOSS = 7; // lost the coin flip
+
     /** {@link io.github.some_example_name.model.MatchMode#PVP} wire value. */
     public static final byte MODE_PVP = 0;
     /** {@link io.github.some_example_name.model.MatchMode#BOT} wire value. */

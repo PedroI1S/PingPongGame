@@ -4,6 +4,14 @@
 **Status:** Approved (brainstorm with Pedro, all sections approved)
 **Depends on:** the physics rebuild (`2026-06-10-physics-rebuild-design.md`), feel-verified 2026-06-12.
 
+**Amendment 2026-06-12 (physics-forced):** drills 3-4 swap zones — topspin
+targets a NEAR band (z ∈ [−3.4,−0.8], "dive it in short") and backspin a DEEP
+band (z ∈ [−6.6,−3.8], "float it deep"). Under the shipped gains, pace is
+offset-driven, so topspin's flat dipping arc lands short and backspin's loft
+floats long; a flat click lands between the bands. The zone-as-lesson
+principle is unchanged. Drill 6's serve zones teach the same truth (high
+click → short serve, low click → deep serve).
+
 ## Goal
 
 Teach the spin mechanics hands-on: a local, offline, guided drill course where
@@ -32,8 +40,8 @@ costs nothing. ESC opens the existing pause menu (Resume / Leave).
 |---|---|---|---|---|---|
 | 1 | **Timing** — "Let it come." | Gentle straight balls from the far side, landing mid-half | 3 returns that land anywhere on the far half | contact happened at `ball.pos.z > 3.5` AND first bounce `bounceZ < 0`, no net | Amber "sweet strip" glows at z ∈ [3.5, 6.0]; early clicks get "Too early — let it cross the glow" |
 | 2 | **Aim** — "Place it." | Same | 2 landings in each lit zone, alternating | bounce inside the lit `ZoneRect` | Teal zones x ∈ [−2.6,−0.8] and [0.8,2.6], z ∈ [−5.8,−1.2] |
-| 3 | **Topspin** — "Roll over it." | First feed: slow-mo (timeScale ×0.5) pre-spun topspin demo, unclickable, WATCH tag. Then normal feeds | 3 returns landing in the deep band WITH topspin | `spin.x < −10` after contact (−z travel) AND bounce in zone | Deep band z ∈ [−6.5,−3.0]; the flat dip-and-kick of topspin makes deep landings natural |
-| 4 | **Backspin** — "Slice under it." | Slow-mo backspin floater demo, then normal | 3 drop shots landing short WITH backspin | `spin.x > +10` AND bounce in zone | Short band z ∈ [−3.0,−0.6]; backspin's loft + dying bounce fits the short zone |
+| 3 | **Topspin** — "Roll over it." | First feed: slow-mo (timeScale ×0.5) pre-spun topspin demo, unclickable, WATCH tag. Then normal feeds | 3 returns landing in the near band WITH topspin | `spin.x < −10` after contact (−z travel) AND bounce in zone | Near band z ∈ [−3.4,−0.8]; topspin's flat dip drops it short |
+| 4 | **Backspin** — "Slice under it." | Slow-mo backspin floater demo, then normal | 3 floats landing deep WITH backspin | `spin.x > +10` AND bounce in zone | Deep band z ∈ [−6.6,−3.8]; backspin's loft floats it long |
 | 5 | **Curve** — "Bend it." | First feed: slow-mo sidespin demo (like drills 3-4). Then feeds offset to x = ±1.5 (alternating side, mirrored handedness) | 2 shots that pass around the pole and land behind it | bounce in zone AND `|spin.y| > 10` AND no pole contact | Pole at (0, table, −3), r = 0.45, h = 1.4 — blocks the straight line from the feed-side contact to the zone (x ∈ [−1.2,1.2], z ∈ [−6.2,−4.2]). Pole hit = thunk + "Clipped the pole — bend it wider" + re-feed. Ball-vs-pole uses the swept-segment test (same math as flies) |
 | 6 | **Serve** — "Open the point." | Player serves (same click-aimed serve as the real game) | 1 serve into each zone | bounce inside the lit zone | Short-left zone x ∈ [−2.6,−0.6], z ∈ [−3.2,−0.8]; then deep-right x ∈ [0.6,2.6], z ∈ [−6.4,−4.0] |
 | 7 | **Graduation** — "Beat the sparring bot." | Real local match | First to 3 points | match outcome | Local `MatchWorld3D` in BOT mode, lives 3 vs 3, gentle bot profile, item phase auto-skipped (both `playerReady`s fired immediately) |
