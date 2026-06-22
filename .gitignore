@@ -166,3 +166,6 @@ Thumbs.db
 ## You could also add that configuration to the text in nativeimage.gradle .
 ## You should delete or comment out the next line if you have configuration in a different resource-config.json .
 **/resource-config.json
+
+## Large media (keep local — too big for git; use Git LFS if it must be tracked)
+Entrega parcial/Screen Recording 2026-05-14 at 19.02.00.mov
