@@ -21,6 +21,7 @@ import com.badlogic.gdx.graphics.g3d.environment.PointLight;
 import com.badlogic.gdx.graphics.g3d.loader.ObjLoader;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
 import com.badlogic.gdx.graphics.g3d.utils.TextureProvider;
+import com.badlogic.gdx.math.Quaternion;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.math.collision.BoundingBox;
@@ -31,6 +32,7 @@ import io.github.some_example_name.config.GameConfig;
 import io.github.some_example_name.world.FlyState;
 import io.github.some_example_name.world.ImpactParticle3D;
 import io.github.some_example_name.world.MatchWorld3D;
+import io.github.some_example_name.world.physics.SpinOrientation;
 
 /**
  * Shared 3D arena (table, net, ball, floor) and HUD helpers used by both
@@ -59,6 +61,8 @@ public final class MatchArenaRenderer implements Disposable {
     private boolean usingObjBall;
     private float ballObjScale = 1f;
     private final Vector3 ballObjCenter = new Vector3();
+    /** Accumulated visual orientation, integrated from the physical spin. */
+    private final Quaternion ballOrientation = new Quaternion();
 
     // ── Bunker arena (generated voxel room, authored in world units) ─────────
     private Model arenaModel, arenaPropsModel, signModel, clutterModel;
@@ -248,14 +252,27 @@ public final class MatchArenaRenderer implements Disposable {
     public void setBallPosition(float x, float y, float z) {
         ensureInitialized();
         if (usingObjBall) {
-            // translate to ball pos, scale to ball size, then re-centre the mesh
+            // translate to ball pos, spin about the ball centre, scale to ball
+            // size, then re-centre the mesh
             ballInstance.transform.idt();
             ballInstance.transform.translate(x, y, z);
+            ballInstance.transform.rotate(ballOrientation);
             ballInstance.transform.scale(ballObjScale, ballObjScale, ballObjScale);
             ballInstance.transform.translate(-ballObjCenter.x, -ballObjCenter.y, -ballObjCenter.z);
         } else {
-            ballInstance.transform.setToTranslation(x, y, z);
+            ballInstance.transform.setToTranslation(x, y, z).rotate(ballOrientation);
         }
+    }
+
+    /**
+     * Advances the ball's visual orientation by its physical spin (world-unit
+     * rad/s, straight from {@code BallState.spin}) over {@code delta} seconds.
+     * Call once per frame before {@link #setBallPosition}. The orientation
+     * deliberately persists across serves — a ball has no canonical rest
+     * orientation, and carrying it over avoids visible snaps.
+     */
+    public void spinBall(Vector3 spin, float delta) {
+        SpinOrientation.integrate(ballOrientation, spin, delta);
     }
 
     public void setFlies(java.util.List<FlyState> playerFlies, java.util.List<FlyState> oppFlies) {

@@ -300,6 +300,7 @@ public final class NetMatchScreen extends BaseScreen implements GameConnection.L
             // cap so packet loss can't run physics far past the last snapshot
             clientPhysics.step(extrapState, Math.min(snapAge, 0.25f), null, extrapContacts);
             renderedBallPos.set(extrapState.pos);
+            arena.spinBall(extrapState.spin, delta);
             arena.setBallPosition(extrapState.pos.x, extrapState.pos.y, extrapState.pos.z);
         }
 
