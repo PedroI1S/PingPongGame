@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="only light">
+<title>PingPongGame — Asset Showcase</title>
+<style>
+  :root{
+    --ink:#241a1f; --accent:#A03B3B; --accent2:#5f7040; --warm:#9c6326;
+    --dim:#6B5B4B; --line:#e4ddd0; --panel:#faf7f1; --panel2:#f4efe6;
+    --bunker:#14090d; --cream:#E8DCC0;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  html,body{ margin:0; padding:0; background:#fff; color:var(--ink); font-family:var(--sans); }
+  header{ display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+          padding:14px 22px 10px; border-bottom:1px solid var(--line); }
+  header h1{ font-family:var(--serif); font-size:22px; margin:0; }
+  header small{ color:var(--dim); font-size:13px; }
+  .wrap{ display:flex; gap:18px; max-width:1220px; margin:0 auto; padding:16px 22px 30px; }
+
+  /* lista lateral */
+  aside{ flex:0 0 240px; }
+  aside h2{ font-size:11px; font-weight:800; letter-spacing:.12em; text-transform:uppercase;
+            color:var(--warm); margin:14px 2px 6px; }
+  aside h2:first-child{ margin-top:0; }
+  aside button{ display:block; width:100%; text-align:left; font:inherit; font-size:14px;
+                background:#fff; border:1px solid transparent; border-radius:.45em;
+                padding:.34em .6em; cursor:pointer; color:var(--ink); }
+  aside button:hover{ background:var(--panel); }
+  aside button.on{ background:var(--accent); color:#fff; font-weight:700; }
+  aside .navhint{ font-size:12px; color:var(--dim); margin-top:14px; line-height:1.6; }
+  .kbd{ display:inline-block; border:1px solid var(--line); border-bottom-width:2px;
+        border-radius:.3em; font-family:var(--mono); font-size:11px; padding:0 .35em; }
+
+  /* viewport + ficha */
+  .main{ flex:1; min-width:0; }
+  #stage{ position:relative; height:min(540px, calc(100vh - 300px)); min-height:380px;
+          border:1px solid #2c2126; border-radius:.55em; overflow:hidden; background:#fff;
+          box-shadow:0 8px 26px rgba(20,9,13,.14); cursor:grab; }
+  #stage.dragging{ cursor:grabbing; }
+  #stage::before{ content:"ASSETS DO JOGO · VOXEL PROPS · ARRASTE PARA ORBITAR"; position:absolute;
+    top:0; left:0; right:0; height:30px; background:var(--bunker); color:var(--cream);
+    font-size:12px; font-weight:700; letter-spacing:.14em; display:flex; align-items:center;
+    padding:0 12px; z-index:5; }
+  #stage canvas{ display:block; width:100%; height:100%; }
+  #fallback{ position:absolute; inset:30px 0 0; display:none; align-items:center;
+    justify-content:center; text-align:center; padding:2em; color:var(--dim); font-size:14px; }
+
+  .card{ display:flex; gap:22px; align-items:baseline; flex-wrap:wrap;
+         background:var(--panel); border:1px solid var(--line); border-radius:.55em;
+         padding:14px 18px; margin-top:12px; }
+  .card h3{ font-family:var(--serif); font-size:24px; margin:0; }
+  .card .role{ flex:1 1 320px; font-size:14px; line-height:1.5; color:var(--ink); margin:0; }
+  .card dl{ display:flex; gap:18px; margin:0; }
+  .card dt{ font-size:10px; font-weight:800; letter-spacing:.1em; text-transform:uppercase;
+            color:var(--dim); }
+  .card dd{ margin:0; font-family:var(--mono); font-size:13px; }
+  .origin{ font-size:12px; color:var(--dim); margin:10px 4px 0; }
+  .origin code{ font-family:var(--mono); font-size:11.5px; background:var(--panel2);
+                border-radius:.3em; padding:.08em .4em; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Asset Showcase — PingPongGame</h1>
+  <small>todos os modelos do jogo, com as texturas reais · funciona offline</small>
+</header>
+
+<div class="wrap">
+  <aside id="nav"></aside>
+  <div class="main">
+    <div id="stage"><div id="fallback">WebGL indisponível nesta máquina — os modelos são
+      voxel-props OBJ gerados por tools/voxel/generate_props.py, texturizados com a paleta
+      de 16 cores do jogo.</div></div>
+    <div class="card">
+      <h3 id="c-label">—</h3>
+      <p class="role" id="c-role">—</p>
+      <dl>
+        <div><dt>vértices</dt><dd id="c-verts">—</dd></div>
+        <div><dt>faces</dt><dd id="c-faces">—</dd></div>
+        <div><dt>tamanho</dt><dd id="c-size">—</dd></div>
+        <div><dt>arquivo</dt><dd id="c-file">—</dd></div>
+      </dl>
+    </div>
+    <p class="origin">Conteúdo <b>autoral</b>: cada modelo é um voxel-prop gerado por
+      <code>tools/voxel/generate_props.py</code> e texturizado com a paleta de 16 cores do jogo
+      (<code>Palette.java</code>) — nada veio de asset store. No jogo, eles ainda passam pelo
+      shader retrô (<code>retro.frag</code>).</p>
+  </div>
+</div>
+
+<script src="lib/three/three.min.js"></script>
+<script src="showcase-assets.js"></script>
+<script>
+(function(){
+'use strict';
+var ASSETS = window.SHOWCASE_ASSETS || [];
+var stage = document.getElementById('stage');
+
+/* WebGL disponível? */
+var HAS_GL = (function(){ try { var c = document.createElement('canvas');
+  return !!(window.WebGLRenderingContext && (c.getContext('webgl') || c.getContext('experimental-webgl'))); }
+  catch(e){ return false; } })();
+if (!HAS_GL || !ASSETS.length){
+  document.getElementById('fallback').style.display = 'flex';
+}
+
+/* ── parser OBJ (v/vt/vn, faces em quads ou tris) → BufferGeometry ────────── */
+function parseObj(text){
+  var v = [], vt = [], vn = [], pos = [], uv = [], nrm = [];
+  var lines = text.split('\n');
+  for (var i = 0; i < lines.length; i++){
+    var p = lines[i].trim().split(/\s+/);
+    if (p[0] === 'v')  v.push([+p[1], +p[2], +p[3]]);
+    else if (p[0] === 'vt') vt.push([+p[1], +p[2]]);
+    else if (p[0] === 'vn') vn.push([+p[1], +p[2], +p[3]]);
+    else if (p[0] === 'f'){
+      var idx = [];
+      for (var k = 1; k < p.length; k++){
+        var t = p[k].split('/');
+        idx.push([+t[0] - 1, t[1] ? +t[1] - 1 : -1, t[2] ? +t[2] - 1 : -1]);
+      }
+      for (var k2 = 1; k2 + 1 < idx.length; k2++){       // fan: quads → 2 tris
+        var tri = [idx[0], idx[k2], idx[k2 + 1]];
+        for (var m = 0; m < 3; m++){
+          var a = tri[m];
+          pos.push(v[a[0]][0], v[a[0]][1], v[a[0]][2]);
+          if (a[1] >= 0 && vt[a[1]]) uv.push(vt[a[1]][0], vt[a[1]][1]);
+          if (a[2] >= 0 && vn[a[2]]) nrm.push(vn[a[2]][0], vn[a[2]][1], vn[a[2]][2]);
+        }
+      }
+    }
+  }
+  var g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  if (uv.length === pos.length / 3 * 2)
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uv), 2));
+  if (nrm.length === pos.length)
+    g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(nrm), 3));
+  else g.computeVertexNormals();
+  return g;
+}
+
+/* ── cena ─────────────────────────────────────────────────────────────────── */
+var scene, cam, ren, holder = null, texCache = {};
+if (HAS_GL && ASSETS.length){
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xffffff);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+  var d1 = new THREE.DirectionalLight(0xffffff, 0.65); d1.position.set(4, 8, 6); scene.add(d1);
+  var d2 = new THREE.DirectionalLight(0xffffff, 0.25); d2.position.set(-5, 3, -4); scene.add(d2);
+  cam = new THREE.PerspectiveCamera(40, 1, 0.01, 500);
+  ren = new THREE.WebGLRenderer({ antialias: true });
+  ren.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  stage.appendChild(ren.domElement);
+}
+
+function fit(){
+  if (!ren) return;
+  var w = stage.clientWidth, h = stage.clientHeight - 30;
+  ren.setSize(w, h);
+  ren.domElement.style.marginTop = '30px';
+  cam.aspect = w / h; cam.updateProjectionMatrix();
+}
+window.addEventListener('resize', fit);
+
+var view = { yaw: 0.7, pitch: 0.42, dist: 3, auto: true };
+
+function loadTexture(a, cb){
+  if (texCache[a.id]) return cb(texCache[a.id]);
+  var img = new Image();
+  img.onload = function(){
+    var t = new THREE.Texture(img);
+    t.magFilter = THREE.NearestFilter;            // look pixelado dos voxels
+    t.minFilter = THREE.NearestFilter;
+    t.colorSpace = THREE.SRGBColorSpace || t.colorSpace;
+    t.needsUpdate = true;
+    texCache[a.id] = t; cb(t);
+  };
+  img.src = a.png;                                // data-URI: sempre same-origin
+}
+
+function show(id){
+  var a = null;
+  for (var i = 0; i < ASSETS.length; i++) if (ASSETS[i].id === id) a = ASSETS[i];
+  if (!a) return;
+  cur = a.id;
+  document.querySelectorAll('#nav button').forEach(function(b){
+    b.classList.toggle('on', b.dataset.id === id);
+  });
+  document.getElementById('c-label').textContent = a.label;
+  document.getElementById('c-role').textContent = a.role;
+  document.getElementById('c-verts').textContent = a.verts.toLocaleString('pt-BR');
+  document.getElementById('c-faces').textContent = a.faces.toLocaleString('pt-BR');
+  document.getElementById('c-size').textContent = a.sizeKB + ' KB';
+  document.getElementById('c-file').textContent = a.file;
+  if (!ren) return;
+  loadTexture(a, function(tex){
+    if (cur !== a.id) return;                     // usuário já trocou de asset
+    if (holder){ scene.remove(holder); holder.traverse(function(o){
+      if (o.geometry) o.geometry.dispose(); }); }
+    holder = new THREE.Group();
+    var mesh = new THREE.Mesh(parseObj(a.obj),
+      new THREE.MeshLambertMaterial({ map: tex }));
+    var box = new THREE.Box3().setFromObject(mesh);
+    var c = box.getCenter(new THREE.Vector3());
+    mesh.position.sub(c);                         // centraliza no origin
+    holder.add(mesh);
+    scene.add(holder);
+    var s = box.getSize(new THREE.Vector3());
+    view.dist = Math.max(s.x, s.y, s.z) * 1.75 + 0.2;
+    view.auto = true;
+  });
+}
+
+/* ── órbita: arrasto + scroll + giro automático ───────────────────────────── */
+var drag = null;
+stage.addEventListener('pointerdown', function(e){
+  drag = { x: e.clientX, y: e.clientY };
+  view.auto = false;
+  stage.classList.add('dragging');
+  stage.setPointerCapture && stage.setPointerCapture(e.pointerId);
+});
+window.addEventListener('pointermove', function(e){
+  if (!drag) return;
+  view.yaw   += (e.clientX - drag.x) * 0.008;
+  view.pitch += (e.clientY - drag.y) * 0.006;
+  view.pitch = Math.max(-1.35, Math.min(1.35, view.pitch));
+  drag = { x: e.clientX, y: e.clientY };
+});
+window.addEventListener('pointerup', function(){
+  drag = null; stage.classList.remove('dragging');
+});
+stage.addEventListener('wheel', function(e){
+  e.preventDefault();
+  view.dist *= (1 + Math.sign(e.deltaY) * 0.08);
+  view.dist = Math.max(0.3, Math.min(60, view.dist));
+}, { passive: false });
+
+/* ── navegação ────────────────────────────────────────────────────────────── */
+var nav = document.getElementById('nav');
+var groups = [];
+ASSETS.forEach(function(a){ if (groups.indexOf(a.group) < 0) groups.push(a.group); });
+groups.forEach(function(g){
+  var h = document.createElement('h2'); h.textContent = g; nav.appendChild(h);
+  ASSETS.filter(function(a){ return a.group === g; }).forEach(function(a){
+    var b = document.createElement('button');
+    b.textContent = a.label; b.dataset.id = a.id;
+    b.onclick = function(){ show(a.id); };
+    nav.appendChild(b);
+  });
+});
+var hint = document.createElement('div');
+hint.className = 'navhint';
+hint.innerHTML = '<span class="kbd">←</span>/<span class="kbd">→</span> trocam de modelo<br>' +
+                 'arraste para orbitar · scroll = zoom';
+nav.appendChild(hint);
+
+var cur = ASSETS.length ? ASSETS[0].id : null;
+document.addEventListener('keydown', function(e){
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  var i = ASSETS.findIndex(function(a){ return a.id === cur; });
+  if (i < 0) return;
+  i = (i + (e.key === 'ArrowRight' ? 1 : ASSETS.length - 1)) % ASSETS.length;
+  show(ASSETS[i].id);
+});
+
+/* ── loop ─────────────────────────────────────────────────────────────────── */
+function loop(){
+  requestAnimationFrame(loop);
+  if (!ren || !holder) return;
+  if (view.auto) view.yaw += 0.006;
+  var cp = Math.cos(view.pitch), sp = Math.sin(view.pitch);
+  cam.position.set(Math.sin(view.yaw) * cp * view.dist,
+                   sp * view.dist,
+                   Math.cos(view.yaw) * cp * view.dist);
+  cam.lookAt(0, 0, 0);
+  ren.render(scene, cam);
+}
+if (ren){ fit(); loop(); }
+if (cur) show(cur);
+})();
+</script>
+</body>
+</html>
