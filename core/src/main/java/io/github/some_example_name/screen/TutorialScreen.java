@@ -114,10 +114,12 @@ public final class TutorialScreen extends BaseScreen {
             ? graduation.isBallVisible()
             : course.isBallVisible();
         if (graduation != null) {
+            arena.spinBall(graduation.getBallSpin(), delta);
             arena.setBallPosition(graduation.getBallPos().x,
                 graduation.getBallPos().y, graduation.getBallPos().z);
             arena.setLivesDisplay(graduation.getPlayerLives(), graduation.getP2Lives());
         } else {
+            arena.spinBall(course.ball().spin, delta);
             arena.setBallPosition(course.ball().pos.x,
                 course.ball().pos.y, course.ball().pos.z);
             arena.setLivesDisplay(0, 0);
