@@ -169,3 +169,8 @@ Thumbs.db
 
 ## Large media (keep local — too big for git; use Git LFS if it must be tracked)
 Entrega parcial/Screen Recording 2026-05-14 at 19.02.00.mov
+
+## Local-only asset/build tooling and deliverables (keep out of git)
+/tools/
+/Entrega final/
+/Entrega parcial/
