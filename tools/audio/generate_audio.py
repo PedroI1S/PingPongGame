@@ -7,10 +7,10 @@ Writes:
   assets/Sounds/Effects/item_use.wav    — thump + metallic shimmer
   assets/Sounds/Effects/life_lost.wav   — bulb pop + dark descending tone
   assets/Sounds/Effects/fly_buzz.wav    — seamless 1.6 s fly-wings loop
-  assets/Sounds/Music/ambient_bunker.wav — seamless 64 s ambient loop
-                                           (low detuned drones, slow swells,
-                                           sparse dissonant pings w/ echo,
-                                           distant metal groans)
+  assets/Sounds/Music/bunker_bar.wav    — seamless 64 s jukebox loop
+                                           (lazy swung 12-bar blues: honky-tonk
+                                           piano, walking upright bass, brush
+                                           hits, vinyl crackle, faint room bed)
 
 Loop seams: every periodic component uses an integer number of cycles over
 the loop length; noise beds get a circular crossfade.
@@ -120,77 +120,133 @@ def fly_buzz():
     return out
 
 
-# ── Music: 64 s seamless ambient loop (22.05 kHz mono) ──────────────────────
+# ── Music: 64 s seamless jukebox loop (22.05 kHz mono) ──────────────────────
+# 90 BPM, 4/4 → 96 beats = 24 bars = two choruses of a 12-bar blues in F.
+# Note tails wrap around modulo the loop length, so the seam stays clean.
 MR = 22050
 LOOP = 64.0
+BEAT = LOOP / 96.0                               # 90 BPM
 
 
-def q(f):
-    """Quantize a frequency to an integer cycle count over the loop."""
-    return round(f * LOOP) / LOOP
+def midi_hz(m):
+    return 440.0 * 2 ** ((m - 69) / 12.0)
+
+
+def add_piano(out, n, beat, midi, dur_beats, amp):
+    """Honky-tonk piano: pair of slightly detuned 'strings' per note."""
+    f = midi_hz(midi)
+    start = int(beat * BEAT * MR)
+    dur = dur_beats * BEAT
+    tau = 0.16 + 0.20 * dur
+    det = TWO_PI * f * 1.0038
+    w = TWO_PI * f
+    for j in range(int((dur + 0.8) * MR)):
+        t = j / MR
+        env = min(1.0, t / 0.005) * math.exp(-t / tau)
+        if t > dur:
+            env *= math.exp(-(t - dur) / 0.06)
+        s = 0.0
+        for h, ha in ((1, 1.0), (2, 0.45), (3, 0.22), (4, 0.10)):
+            s += ha * (math.sin(w * h * t) + math.sin(det * h * t))
+        out[(start + j) % n] += amp * env * s * 0.5
+
+
+def add_bass(out, n, beat, midi, amp=0.17):
+    """Upright-bass pluck, one beat long."""
+    f = midi_hz(midi)
+    start = int(beat * BEAT * MR)
+    w = TWO_PI * f
+    for j in range(int(0.92 * BEAT * MR)):
+        t = j / MR
+        env = min(1.0, t / 0.006) * math.exp(-t / 0.38)
+        s = math.sin(w * t) + 0.35 * math.sin(2 * w * t) + 0.08 * math.sin(3 * w * t)
+        out[(start + j) % n] += amp * env * s
+
+
+def add_brush(out, n, beat, amp=0.030):
+    """Soft brushed-snare tick (high-passed noise burst)."""
+    start = int(beat * BEAT * MR)
+    prev = 0.0
+    for j in range(int(0.09 * MR)):
+        t = j / MR
+        white = rng.random() * 2 - 1
+        out[(start + j) % n] += amp * (white - prev) * math.exp(-t / 0.028)
+        prev = white
+
+
+# F blues melody material (F Ab Bb B C Eb F). Times in beats, swing baked in
+# (offbeats land on the +0.67 triplet spot). One 48-beat chorus.
+MELODY = (
+    (0.00, 72, 0.6), (0.67, 70, 0.3), (1.00, 68, 0.6), (2.00, 65, 1.8),
+    (5.67, 65, 0.3), (6.00, 68, 0.6), (6.67, 70, 1.2),
+    (8.00, 72, 0.9), (9.00, 71, 0.4), (9.67, 70, 0.3), (10.00, 68, 1.6),
+    (13.00, 65, 2.0),
+    (16.00, 70, 0.6), (16.67, 72, 0.3), (17.00, 75, 1.4), (18.67, 72, 1.2),
+    (20.00, 70, 0.6), (20.67, 68, 0.3), (21.00, 70, 0.6), (22.00, 68, 1.4),
+    (24.00, 65, 1.6), (25.67, 68, 0.3), (26.00, 70, 0.6), (26.67, 72, 1.6),
+    (29.00, 72, 0.9), (30.00, 70, 1.4),
+    (32.00, 72, 0.6), (33.00, 75, 1.2), (34.00, 72, 0.9),
+    (36.00, 70, 0.6), (36.67, 71, 0.3), (37.00, 72, 0.6), (38.00, 70, 1.4),
+    (40.00, 65, 0.9), (41.67, 68, 0.3), (42.00, 65, 1.8),
+    (44.00, 72, 0.4), (44.67, 70, 0.4), (45.33, 68, 0.4), (46.00, 65, 1.6),
+)
+
+# 12-bar form: bass roots and piano shell voicings (root/3rd/b7).
+FORM = ("F", "F", "F", "F", "Bb", "Bb", "F", "F", "C", "Bb", "F", "C")
+ROOTS = {"F": 41, "Bb": 46, "C": 48}
+SHELLS = {"F": (53, 57, 63), "Bb": (56, 58, 62), "C": (52, 58, 60)}
 
 
 def music():
     n = int(LOOP * MR)
     out = [0.0] * n
 
-    # 1. detuned low drone + dark pad partials, all loop-exact, slow LFOs
-    voices = (
-        (q(55.00), 0.15, q(1 / 16.0), 0.0),       # A1
-        (q(55.45), 0.13, q(1 / 16.0), math.pi),   # beating partner
-        (q(82.41), 0.065, q(3 / 64.0), 1.3),      # E2
-        (q(130.81), 0.05, q(5 / 64.0), 3.9),      # C3 (minor colour)
-        (q(61.74), 0.035, q(2 / 64.0), 5.1),      # D#2 — uneasy tritone vs A
-    )
-    for f, amp, lfo, ph in voices:
-        for i in range(n):
-            t = i / MR
-            env = 0.8 + 0.2 * math.sin(TWO_PI * lfo * t + ph)
-            out[i] += amp * env * math.sin(TWO_PI * f * t)
+    # 1. rhythm section: walking bass + piano comping on 2 & 4 + brushes
+    for bar in range(24):
+        chord = FORM[bar % 12]
+        nxt = FORM[(bar + 1) % 12]
+        root = ROOTS[chord]
+        b0 = bar * 4.0
+        walk = [root, root + 4, root + 7]
+        if nxt == chord:
+            walk.append(root + 9)                # stay: land on the 6th
+        else:                                    # chromatic approach note
+            walk.append(ROOTS[nxt] + (1 if bar % 2 else -1))
+        for k, m in enumerate(walk):
+            add_bass(out, n, b0 + k, m)
+        for hit in (1.0, 3.0):                   # backbeat comp, short & soft
+            for m in SHELLS[chord]:
+                add_piano(out, n, b0 + hit, m, 0.45, 0.050)
+            add_brush(out, n, b0 + hit)
 
-    # 2. brown-noise rumble bed (circular crossfade for the seam)
-    bed = [0.0] * n
+    # 2. melody: full chorus, then a sparser softer variation
+    for t, m, d in MELODY:
+        add_piano(out, n, t, m, d, 0.105)
+    for i, (t, m, d) in enumerate(MELODY):
+        if i % 3 != 2:
+            add_piano(out, n, t + 48.0, m, d, 0.085)
+
+    # 3. faint room-noise bed (kept from the bunker mix, way down in level).
+    # Generate fade extra samples and blend the overhang into the head so the
+    # value at sample 0 continues seamlessly from sample n-1.
+    fade = int(0.75 * MR)
+    bed = [0.0] * (n + fade)
     x = 0.0
-    for i in range(n):
+    for i in range(n + fade):
         x = (x + 0.02 * (rng.random() * 2 - 1)) * 0.998
         bed[i] = x
-    fade = int(0.75 * MR)
     for i in range(fade):
         a = i / fade
-        bed[i] = bed[i] * a + bed[n - fade + i] * (1 - a)
+        bed[i] = bed[i] * a + bed[n + i] * (1 - a)
     for i in range(n):
-        out[i] += 2.2 * bed[i]                   # bed is tiny; scale up
+        out[i] += 0.55 * bed[i]
 
-    # 3. sparse dissonant pings with echo taps
-    pings = ((6.5, 932.33, 0.075), (18.4, 622.25, 0.06), (31.0, 739.99, 0.07),
-             (44.2, 466.16, 0.055), (55.5, 587.33, 0.065))
-    for t0, f, amp in pings:
-        for tap, gain in ((0.0, 1.0), (0.311, 0.5), (0.622, 0.27), (0.933, 0.14)):
-            start = int((t0 + tap) * MR)
-            length = int(2.4 * MR)
-            for j in range(length):
-                if start + j >= n:
-                    break
-                t = j / MR
-                env = min(1.0, t / 0.01) * math.exp(-t / 0.9)
-                s = math.sin(TWO_PI * f * t) + 0.6 * math.sin(TWO_PI * f * 1.003 * t)
-                out[start + j] += amp * gain * env * s * 0.5
-
-    # 4. distant metal groans (slow downward gliss, vibrato, hann swell)
-    for t0, fa, fb in ((24.0, 146.83, 103.83), (50.0, 130.81, 92.50)):
-        length = int(5.0 * MR)
-        start = int(t0 * MR)
-        phase = 0.0
-        for j in range(length):
-            if start + j >= n:
-                break
-            t = j / MR
-            p = j / length
-            f = fa + (fb - fa) * p
-            vib = 1.0 + 0.004 * math.sin(TWO_PI * 4.5 * t)
-            phase += TWO_PI * f * vib / MR
-            env = 0.5 * (1 - math.cos(TWO_PI * p))          # hann
-            out[start + j] += 0.06 * env * (math.sin(phase) + 0.4 * math.sin(phase * 2.01))
+    # 4. vinyl crackle: sparse tiny pops
+    for _ in range(140):
+        start = rng.randrange(n)
+        gain = 0.05 + 0.07 * rng.random()
+        for j in range(rng.randrange(2, 6)):
+            out[(start + j) % n] += gain * (rng.random() * 2 - 1)
 
     # gentle soft-clip + headroom
     return [math.tanh(s * 1.15) * 0.85 for s in out]
@@ -203,5 +259,5 @@ if __name__ == "__main__":
     write_wav(os.path.join(fx, "item_use.wav"), item_use(), SR)
     write_wav(os.path.join(fx, "life_lost.wav"), life_lost(), SR)
     write_wav(os.path.join(fx, "fly_buzz.wav"), fly_buzz(), SR)
-    write_wav(os.path.join(ROOT, "Music", "ambient_bunker.wav"), music(), MR)
+    write_wav(os.path.join(ROOT, "Music", "bunker_bar.wav"), music(), MR)
     print("done:", os.path.abspath(ROOT))

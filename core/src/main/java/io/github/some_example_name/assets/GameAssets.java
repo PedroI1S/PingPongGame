@@ -17,7 +17,7 @@ public final class GameAssets implements Disposable {
     public static final String SFX_ITEM_USE  = "Sounds/Effects/item_use.wav";
     public static final String SFX_LIFE_LOST = "Sounds/Effects/life_lost.wav";
     public static final String SFX_FLY_BUZZ  = "Sounds/Effects/fly_buzz.wav";
-    public static final String MUSIC_BG      = "Sounds/Music/ambient_bunker.wav";
+    public static final String MUSIC_BG      = "Sounds/Music/bunker_bar.wav";
 
     private static GameAssets instance;
 
